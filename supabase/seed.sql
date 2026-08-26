@@ -1,0 +1,1 @@
+-- Sem dados iniciais nesta fundação. Adicione somente dados locais, reproduzíveis e sem segredos.

@@ -1,0 +1,16 @@
+{
+  "name": "gr-service-infrastructure",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Ferramentas locais de infraestrutura do gr-service",
+  "scripts": {
+    "supabase:version": "supabase --version",
+    "supabase:start": "supabase start",
+    "supabase:status": "supabase status",
+    "supabase:reset": "supabase db reset",
+    "supabase:stop": "supabase stop"
+  },
+  "devDependencies": {
+    "supabase": "2.115.0"
+  }
+}

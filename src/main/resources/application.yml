@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: gr-service
+  jackson:
+    time-zone: UTC
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  pattern:
+    level: "%5p [requestId:%X{requestId:-} correlationId:%X{correlationId:-} tenantId:%X{tenantId:-}]"
