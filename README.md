@@ -4,7 +4,7 @@ Backend do projeto provisoriamente chamado **Gerenciador Rural**. Este repositó
 
 ## Estado atual
 
-A aplicação Spring Boot é executável e expõe apenas `GET /actuator/health`. Existem contratos mínimos para comandos, consultas, eventos de domínio e contexto de tenant, além de identificação de requisições e uma convenção de erros de validação. Módulos de negócio, autenticação, organizações, fazendas, usuários e persistência ainda não foram implementados.
+A aplicação Spring Boot é executável e expõe apenas `GET /actuator/health`. A primeira migration persistente define usuários internos, organizações, fazendas, memberships e escopos por fazenda no schema privado `app`, com constraints multi-tenant e RLS. Autenticação HTTP, repositories e casos de uso ainda não foram implementados.
 
 ## Arquitetura resumida
 
@@ -22,9 +22,9 @@ Leia [a visão arquitetural](docs/architecture/overview.md) e os [ADRs](docs/adr
 - Java 21;
 - acesso à internet na primeira execução do Maven Wrapper;
 - Node.js e npm para as ferramentas locais de infraestrutura;
-- Docker Desktop com backend WSL 2 para operar o PostgreSQL local.
+- Docker Desktop com backend WSL 2 para operar o PostgreSQL local e executar os testes Testcontainers.
 
-Não é necessário instalar Maven nem Supabase CLI globalmente. O Wrapper usa Maven 3.9.16 e a CLI do Supabase está fixada como `devDependency` no `package.json`. A API ainda não abre conexão com o banco, portanto pode ser executada sem Docker durante esta etapa.
+Não é necessário instalar Maven nem Supabase CLI globalmente. O Wrapper usa Maven 3.9.16 e a CLI do Supabase está fixada como `devDependency` no `package.json`. A API ainda não abre conexão com o banco em runtime, mas `mvn verify` exige Docker para validar as migrations em PostgreSQL real com Testcontainers.
 
 ## Preparação do ambiente
 
@@ -77,7 +77,21 @@ Em Bash:
 ./scripts/check.sh
 ```
 
-O mesmo comando compila a aplicação, executa JUnit 5, valida os limites com ArchUnit e empacota o JAR. Testcontainers PostgreSQL será adicionado somente quando houver um teste de integração real com banco.
+O mesmo comando compila a aplicação, executa JUnit 5, valida os limites com ArchUnit e empacota o JAR.
+
+Os testes de integração iniciam um PostgreSQL 15 isolado, aplicam diretamente os arquivos reais de `supabase/migrations` em ordem e encerram o container automaticamente. Eles não dependem da stack local do Supabase.
+
+Os scripts aceitam verificações locais opcionais sem reset implícito:
+
+```powershell
+.\scripts\check.ps1 -SupabaseStatus
+.\scripts\check.ps1 -SupabaseReset
+```
+
+```bash
+./scripts/check.sh --supabase-status
+./scripts/check.sh --supabase-reset
+```
 
 ## Supabase local e migrations
 
@@ -93,6 +107,14 @@ npx supabase migration new nome_da_migration
 ```
 
 Detalhes estão em [supabase/README.md](supabase/README.md). Toda alteração estrutural deve ser feita por migration versionada. Não altere tabelas de negócio manualmente pelo painel e não use `supabase db push` sem um fluxo de entrega aprovado. Nenhuma migration ornamental foi criada nesta fundação.
+
+## Identidade e tenancy
+
+A organização é o tenant; fazendas e memberships pertencem obrigatoriamente a uma organização. Usuários são identidades globais e podem participar de vários tenants. O UUID de `app.users` corresponderá futuramente ao claim `sub` do Supabase Auth, sem FK para `auth.users` e sem armazenar senhas ou tokens.
+
+As tabelas de negócio ficam no schema privado `app`, fora dos schemas expostos pelo PostgREST. Clientes acessam o domínio exclusivamente pela API Spring. A role `app_api` e as policies RLS usam um tenant configurado localmente por transação como defesa adicional, sem substituir os futuros filtros tenant-aware dos repositories.
+
+Leia o [modelo de identidade e tenancy](docs/architecture/identity-tenancy-data-model.md) para conhecer tabelas, relações, índices e camadas de segurança.
 
 ## Estrutura
 
@@ -116,6 +138,6 @@ Cada módulo futuro seguirá `modules/<module>/{domain,application,infrastructur
 
 ## Banco e acesso ao domínio
 
-O schema pertence às migrations do Supabase CLI. JPA não foi incluído porque ainda não existem entidades; quando houver uso real, `ddl-auto` deverá ser `validate`, nunca `update`, `create` ou `create-drop`.
+O schema pertence às migrations do Supabase CLI. JPA não foi incluído porque ainda não existem repositories ou entidades Java; quando houver uso real, `ddl-auto` deverá ser `validate`, nunca `update`, `create` ou `create-drop`.
 
 Flutter e Angular não poderão escrever diretamente nas tabelas de negócio. Clientes chamam a API, que autentica, resolve usuário e tenant, valida fazenda, permissões, capacidades e cotas. RLS será uma defesa complementar, não um substituto das regras da API.

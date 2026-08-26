@@ -37,10 +37,14 @@ A chave pública do Supabase poderá existir no portal e no aplicativo. `service
 
 ## Dados e integração
 
-O PostgreSQL será compartilhado entre tenants, com isolamento por `tenant_id`. O schema será controlado por migrations do Supabase CLI. Eventos de domínio poderão originar mensagens de outbox na mesma transação da alteração; publicação assíncrona e consumidores serão adicionados apenas quando existir um caso real.
+O PostgreSQL é compartilhado entre tenants, com isolamento por `tenant_id`. Tabelas de negócio ficam no schema privado `app`, que não é exposto pelo PostgREST. Constraints compostas impedem relações cruzadas e a role `app_api` está sujeita a RLS baseada em contexto transacional. Repositories futuros ainda deverão filtrar explicitamente pelo tenant validado.
+
+Usuários internos são globais e podem participar de várias organizações. Seu UUID corresponderá ao claim `sub`, sem FK para `auth.users`; sincronização e autenticação serão implementadas na próxima etapa. O schema é controlado por migrations do Supabase CLI e validado em PostgreSQL 15 com Testcontainers.
+
+Eventos de domínio poderão originar mensagens de outbox na mesma transação da alteração; publicação assíncrona e consumidores serão adicionados apenas quando existir um caso real.
 
 A aplicação permanece stateless. Request ID e correlation ID entram no contexto de logs; tenant ID será incluído quando a autenticação fornecer um contexto validado. Logs não devem conter JWT, segredos ou dados pessoais desnecessários.
 
 ## Limites desta fundação
 
-Não existem módulos de negócio, autenticação, JPA, tabelas, outbox, jobs, idempotência persistida ou Event Sourcing. Os contratos atuais estabelecem linguagem e limites, não implementam essas capacidades antecipadamente.
+Existem apenas o modelo SQL de identidade/tenancy e seus testes de integração. Não existem autenticação HTTP, Spring Security, JPA, repositories, casos de uso, endpoints, outbox, jobs, idempotência persistida ou Event Sourcing.

@@ -21,6 +21,14 @@ Estas regras valem para todo o repositório. Antes de uma decisão arquitetural,
 15. Atualize documentação e ADRs quando uma decisão arquitetural mudar.
 16. Preserve a aplicação stateless: nada de estado funcional em singleton mutável, sessão HTTP ou arquivo local.
 17. Mantenha textos visíveis e documentação em português do Brasil correto e natural. Nomes técnicos no código podem permanecer em inglês.
+18. Crie tabelas de negócio somente no schema privado `app`; não exponha esse schema diretamente a clientes.
+19. Foreign keys entre tabelas tenant-scoped devem incluir `tenant_id` quando necessário para impedir relações cruzadas.
+20. Índices de consultas operacionais devem começar por `tenant_id` quando o acesso for delimitado pelo tenant.
+21. UUIDs de agregados devem aceitar valores gerados antecipadamente pela aplicação ou por clientes offline autorizados.
+22. RLS é defesa complementar e não substitui filtros explícitos por tenant em repositories.
+23. Testes devem executar as migrations reais de `supabase/migrations`; não duplique SQL em recursos de teste.
+24. Nenhuma entidade ou migration de negócio deve referenciar diretamente `auth.users`.
+25. Clientes web e mobile acessam dados de negócio pela API Spring, nunca diretamente pelas tabelas do Supabase.
 
 ## Convenções de implementação
 

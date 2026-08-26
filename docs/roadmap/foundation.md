@@ -8,11 +8,14 @@
 - request ID, correlation ID e convenção de erro de validação;
 - perfis local e teste, CI e scripts de verificação;
 - configuração versionada do Supabase local, sem migrations ornamentais;
+- schema privado `app` com usuários, organizações, fazendas, memberships e escopos por fazenda;
+- constraints compostas multi-tenant, role `app_api`, contexto transacional e RLS;
+- migrations reais validadas em PostgreSQL 15 com Testcontainers;
 - decisões arquiteturais documentadas.
 
 ## Próxima etapa
 
-Criar a fundação de identidade, organizações, fazendas e isolamento multi-tenant. Essa etapa deve incluir autenticação por JWT do Supabase, modelo mínimo de vínculo de usuário, resolução segura do `TenantContext`, primeiras migrations e testes de integração com PostgreSQL/Testcontainers.
+Implementar Spring Security Resource Server, validar JWTs do Supabase e sincronizar o claim `sub` com o usuário interno. Depois, resolver com segurança o `TenantContext` e a fazenda ativa, criar repositories tenant-aware e expor os primeiros endpoints de identidade, organização e fazenda.
 
 Antes de codificar, detalhe os limites entre identidade, organização e fazenda e defina como permissões e seleção de fazenda serão validadas. Não implemente rebanho, reprodução, sanidade ou assinaturas junto dessa etapa.
 

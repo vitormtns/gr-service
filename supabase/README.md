@@ -19,6 +19,22 @@ Os serviços locais expõem a API em `127.0.0.1:54321`, PostgreSQL em `127.0.0.1
 
 Analytics/Vector permanece desativado nesta fundação. No Windows, a coleta local de logs exigiria expor o daemon Docker em `tcp://localhost:2375`; essa superfície administrativa não é necessária para o banco e a API locais.
 
+## Schema da aplicação
+
+A migration `identity_tenancy_foundation` cria no schema privado `app`:
+
+- usuários internos globais;
+- organizações como tenants;
+- fazendas;
+- memberships organizacionais;
+- escopos de acesso por fazenda;
+- role restrita `app_api`;
+- função transacional de tenant e policies RLS.
+
+O schema `app` não aparece em `api.schemas` no `config.toml` e não é exposto pelo PostgREST. Não adicione policies para `anon` ou `authenticated`: o fluxo suportado é `Clientes -> API Spring -> PostgreSQL`.
+
+`app.users.id` aceitará o UUID do claim `sub`, mas não há FK para `auth.users`. Senhas, tokens e chaves do Supabase nunca pertencem às tabelas da aplicação.
+
 Crie uma migration com um nome descritivo:
 
 ```bash
@@ -26,5 +42,7 @@ npx supabase migration new nome_da_migration
 ```
 
 Edite o SQL gerado em `migrations/` e valide-o com `npm run supabase:reset`. Mudanças estruturais devem sempre passar por migration; não replique no repositório alterações feitas manualmente pelo painel. Não use `supabase link` ou `supabase db push` no fluxo local da fundação.
+
+`mvn verify` também aplica essas mesmas migrations, sem cópias, em PostgreSQL 15 iniciado pelo Testcontainers. A stack Supabase não precisa estar ativa para essa validação.
 
 O `seed.sql` é exclusivo para dados locais reproduzíveis. Nunca inclua credenciais, tokens ou dados pessoais reais.
