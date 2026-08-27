@@ -1,5 +1,8 @@
 package com.gerenciadorrural.shared.security.infrastructure;
 
+import com.gerenciadorrural.infrastructure.database.PostgresTestEnvironment;
+import com.gerenciadorrural.infrastructure.database.SpringPostgresTestSupport;
+import com.gerenciadorrural.modules.identity.domain.InternalUserRepository;
 import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
@@ -7,14 +10,20 @@ import com.nimbusds.jose.JWSSigner;
 import com.nimbusds.jose.crypto.MACSigner;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
@@ -25,6 +34,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.containsString;
 
 @ActiveProfiles("test")
 @SpringBootTest(properties = {
@@ -37,7 +51,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "app.security.supabase.clock-skew=1s"
 })
 @AutoConfigureMockMvc
-class SecurityHttpIntegrationTest {
+class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
 
     private static final String ISSUER = "https://auth.example.test/auth/v1";
     private static final String SECRET = "test-only-hmac-key-with-at-least-32-bytes";
@@ -45,6 +59,19 @@ class SecurityHttpIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockitoSpyBean
+    private InternalUserRepository internalUserRepository;
+
+    @BeforeEach
+    void clearDatabase() throws SQLException {
+        PostgresTestEnvironment.clearUsers();
+    }
+
+    @AfterEach
+    void resetRepositorySpy() {
+        reset(internalUserRepository);
+    }
 
     @Test
     void healthIsPublic() throws Exception {
@@ -65,7 +92,7 @@ class SecurityHttpIntegrationTest {
     }
 
     @Test
-    void validTokenReturnsOnlyAuthenticatedIdentity() throws Exception {
+    void validTokenCreatesAndReturnsThePersistedInternalIdentity() throws Exception {
         UUID userId = UUID.randomUUID();
         String sessionId = UUID.randomUUID().toString();
         String token = sign(validClaims(userId)
@@ -77,14 +104,90 @@ class SecurityHttpIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").value(userId.toString()))
                 .andExpect(jsonPath("$.email").value("pessoa@example.test"))
-                .andExpect(jsonPath("$.sessionId").value(sessionId))
-                .andExpect(jsonPath("$.authenticationLevel").value("aal1"))
-                .andExpect(jsonPath("$.issuedAt").isString())
-                .andExpect(jsonPath("$.expiresAt").isString())
+                .andExpect(jsonPath("$.displayName").isEmpty())
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.version").value(0))
+                .andExpect(jsonPath("$.createdAt").isString())
+                .andExpect(jsonPath("$.updatedAt").isString())
+                .andExpect(jsonPath("$.authentication.sessionId").value(sessionId))
+                .andExpect(jsonPath("$.authentication.authenticationLevel").value("aal1"))
+                .andExpect(jsonPath("$.authentication.issuedAt").isString())
+                .andExpect(jsonPath("$.authentication.expiresAt").isString())
                 .andExpect(jsonPath("$.accessToken").doesNotExist())
                 .andExpect(jsonPath("$.refreshToken").doesNotExist())
                 .andExpect(jsonPath("$.organizationId").doesNotExist())
                 .andExpect(jsonPath("$.farmId").doesNotExist());
+
+        assertThatNoTenantOrOrganizationalRoleWasCreated();
+    }
+
+    @Test
+    void repeatedRequestIsIdempotentAndChangedEmailUsesOptimisticLocking() throws Exception {
+        UUID userId = UUID.randomUUID();
+        String firstToken = sign(validClaims(userId).claim("email", "first@example.test"), SECRET);
+        String changedToken = sign(validClaims(userId).claim("email", "changed@example.test"), SECRET);
+
+        mockMvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + firstToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(0));
+        mockMvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + firstToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(0));
+        mockMvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + changedToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value("changed@example.test"))
+                .andExpect(jsonPath("$.version").value(1));
+    }
+
+    @Test
+    void tokenWithoutEmailStillCreatesAnInternalUser() throws Exception {
+        String token = sign(validClaims(UUID.randomUUID()), SECRET);
+
+        mockMvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").isEmpty())
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+    }
+
+    @Test
+    void suspendedInternalUserReturnsSafe403() throws Exception {
+        UUID userId = insertBlockedUser("SUSPENDED");
+        String token = sign(validClaims(userId), SECRET);
+
+        mockMvc.perform(get("/api/v1/me")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .header("X-Request-ID", "suspended-request"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("INTERNAL_USER_SUSPENDED"))
+                .andExpect(jsonPath("$.requestId").value("suspended-request"))
+                .andExpect(jsonPath("$.message").value("O acesso deste usuário está suspenso"));
+    }
+
+    @Test
+    void deactivatedInternalUserReturnsSafe403() throws Exception {
+        UUID userId = insertBlockedUser("DEACTIVATED");
+        String token = sign(validClaims(userId), SECRET);
+
+        mockMvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("INTERNAL_USER_DEACTIVATED"));
+    }
+
+    @Test
+    void databaseFailureReturnsSafe503WithoutInternalDetails() throws Exception {
+        doThrow(new CannotGetJdbcConnectionException("database-host.example.test:5432"))
+                .when(internalUserRepository).findById(any());
+        String token = sign(validClaims(UUID.randomUUID()), SECRET);
+
+        mockMvc.perform(get("/api/v1/me")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .header("X-Request-ID", "database-failure"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("IDENTITY_PERSISTENCE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.requestId").value("database-failure"))
+                .andExpect(jsonPath("$.message")
+                        .value("O serviço de identidade está temporariamente indisponível"))
+                .andExpect(jsonPath("$.message").value(not(containsString("database-host"))));
     }
 
     @Test
@@ -199,5 +302,28 @@ class SecurityHttpIntegrationTest {
         JWSSigner signer = new MACSigner(secret.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         jwt.sign(signer);
         return jwt.serialize();
+    }
+
+    private static UUID insertBlockedUser(String status) throws SQLException {
+        UUID id = UUID.randomUUID();
+        try (Connection connection = PostgresTestEnvironment.adminConnection();
+             var statement = connection.prepareStatement("insert into app.users (id, status) values (?, ?)")) {
+            statement.setObject(1, id);
+            statement.setString(2, status);
+            statement.executeUpdate();
+        }
+        return id;
+    }
+
+    private static void assertThatNoTenantOrOrganizationalRoleWasCreated() throws SQLException {
+        try (Connection connection = PostgresTestEnvironment.adminConnection();
+             var statement = connection.createStatement();
+             var result = statement.executeQuery("""
+                     select (select count(*) from app.organizations)
+                          + (select count(*) from app.organization_memberships)
+                     """)) {
+            result.next();
+            org.assertj.core.api.Assertions.assertThat(result.getLong(1)).isZero();
+        }
     }
 }

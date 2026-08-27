@@ -24,6 +24,16 @@ function Get-HttpStatus {
 $stdoutLog = New-TemporaryFile
 $stderrLog = New-TemporaryFile
 $apiProcess = $null
+$databaseContainer = $null
+$supabaseHealthy = $false
+$runtimeRoleCreated = $false
+$runtimeUsername = "app_smoke_runtime"
+$runtimePassword = "smoke_$([guid]::NewGuid().ToString('N'))"
+$databaseEnvironment = @("DATABASE_URL", "DATABASE_USERNAME", "DATABASE_PASSWORD")
+$previousEnvironment = @{}
+foreach ($name in $databaseEnvironment) {
+    $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+}
 $workspacePath = (Resolve-Path ".").Path
 $initialApiProcessIds = @(Get-CimInstance Win32_Process -Filter "Name = 'java.exe'" |
         Where-Object {
@@ -40,12 +50,34 @@ try {
     if ($supabaseStatusExitCode -ne 0) {
         throw "A stack local do Supabase não está saudável."
     }
+    $supabaseHealthy = $true
     $jsonStart = $rawStatus.IndexOf("{")
     $jsonEnd = $rawStatus.LastIndexOf("}")
     if ($jsonStart -lt 0 -or $jsonEnd -le $jsonStart) {
         throw "O status estruturado do Supabase local está indisponível."
     }
     $supabase = $rawStatus.Substring($jsonStart, $jsonEnd - $jsonStart + 1) | ConvertFrom-Json
+
+    $databaseContainers = @(& docker ps --filter "name=supabase_db_gr-service" --format "{{.ID}}")
+    if ($LASTEXITCODE -ne 0 -or $databaseContainers.Count -ne 1) {
+        throw "Não foi possível identificar com segurança o container PostgreSQL local."
+    }
+    $databaseContainer = $databaseContainers[0].Trim()
+    $roleSql = @"
+drop role if exists $runtimeUsername;
+create role $runtimeUsername login noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls password '$runtimePassword';
+grant app_api to $runtimeUsername;
+"@
+    $roleSql | & docker exec -i $databaseContainer psql -v ON_ERROR_STOP=1 -U postgres -d postgres | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Não foi possível criar o login runtime efêmero."
+    }
+    $runtimeRoleCreated = $true
+
+    [Environment]::SetEnvironmentVariable(
+            "DATABASE_URL", "jdbc:postgresql://127.0.0.1:54322/postgres", "Process")
+    [Environment]::SetEnvironmentVariable("DATABASE_USERNAME", $runtimeUsername, "Process")
+    [Environment]::SetEnvironmentVariable("DATABASE_PASSWORD", $runtimePassword, "Process")
 
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
     $listener.Start()
@@ -65,6 +97,9 @@ try {
         -RedirectStandardOutput $stdoutLog.FullName `
         -RedirectStandardError $stderrLog.FullName `
         -PassThru
+    foreach ($name in $databaseEnvironment) {
+        [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+    }
 
     $healthUri = "http://127.0.0.1:$port/actuator/health"
     $deadline = (Get-Date).AddSeconds(45)
@@ -118,6 +153,11 @@ try {
 
     $meUri = "http://127.0.0.1:$port/api/v1/me"
     $me = Invoke-RestMethod -Uri $meUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    $meAgain = Invoke-RestMethod -Uri $meUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    $storedVersion = (& docker exec $databaseContainer psql -At -U postgres -d postgres `
+            -c "select version from app.users where id = '$($signup.user.id)'::uuid").Trim()
+    $sensitiveColumnCount = (& docker exec $databaseContainer psql -At -U postgres -d postgres `
+            -c "select count(*) from information_schema.columns where table_schema = 'app' and table_name = 'users' and column_name in ('password', 'token', 'access_token', 'refresh_token')").Trim()
     $missingTokenStatus = Get-HttpStatus -Uri $meUri
     $lastCharacter = $accessToken[$accessToken.Length - 1]
     $replacement = if ($lastCharacter -eq "A") { "B" } else { "A" }
@@ -138,12 +178,19 @@ try {
         JwksKeyCount = @($jwks.keys).Count
         ValidTokenStatus = 200
         SubjectMatches = $me.userId -eq $signup.user.id -and $me.userId -eq $jwtPayload.sub
+        UserPersisted = $storedVersion -eq "0"
+        SecondCallIdempotent = $meAgain.version -eq $me.version `
+                -and $meAgain.updatedAt -eq $me.updatedAt
+        SensitiveColumnsFound = [int]$sensitiveColumnCount
         MissingTokenStatus = $missingTokenStatus
         AlteredTokenStatus = $alteredTokenStatus
         RawTokenFoundInApiLog = $apiLogs.Contains($accessToken)
         EmailFoundInApiLog = $apiLogs.Contains($email)
     }
 } finally {
+    foreach ($name in $databaseEnvironment) {
+        [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+    }
     if ($apiProcess -and -not $apiProcess.HasExited) {
         Stop-Process -Id $apiProcess.Id -Force
         Wait-Process -Id $apiProcess.Id -Timeout 10 -ErrorAction SilentlyContinue
@@ -157,6 +204,13 @@ try {
     foreach ($process in $newApiProcesses) {
         Stop-Process -Id $process.ProcessId -Force
         Wait-Process -Id $process.ProcessId -Timeout 10 -ErrorAction SilentlyContinue
+    }
+    if ($runtimeRoleCreated -and $databaseContainer) {
+        "drop role if exists $runtimeUsername;" |
+                & docker exec -i $databaseContainer psql -v ON_ERROR_STOP=1 -U postgres -d postgres | Out-Null
+    }
+    if ($supabaseHealthy) {
+        & .\node_modules\.bin\supabase.cmd db reset | Out-Null
     }
     Remove-Item -LiteralPath $stdoutLog.FullName -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stderrLog.FullName -Force -ErrorAction SilentlyContinue

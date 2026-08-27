@@ -1,6 +1,6 @@
-package com.gerenciadorrural.shared.security.api;
+package com.gerenciadorrural.modules.identity.api;
 
-import com.gerenciadorrural.shared.security.application.GetCurrentUser;
+import com.gerenciadorrural.modules.identity.application.GetCurrentUser;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;

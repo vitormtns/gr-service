@@ -2,7 +2,7 @@
 
 ## Modelo
 
-- `app.users` representa a identidade global interna. Seu UUID corresponderá ao claim `sub` do Supabase Auth, sem FK para `auth.users`; e-mail é opcional e nenhuma senha ou token é armazenado.
+- `app.users` representa a identidade global interna. Seu UUID corresponde ao claim validado `sub` do Supabase Auth, sem FK para `auth.users`; e-mail é opcional e nenhuma senha ou token é armazenado.
 - `app.organizations` representa o tenant. Toda fazenda e todo vínculo organizacional apontam para uma organização existente.
 - `app.farms` representa uma propriedade operacional e possui `tenant_id` obrigatório.
 - `app.organization_memberships` vincula um usuário global a uma organização com role `OWNER`, `ADMIN`, `MANAGER`, `OPERATOR` ou `VIEWER`. Roles organizacionais não representam planos ou papéis comerciais de assinatura.
@@ -38,7 +38,7 @@ O caminho suportado é:
 Clientes -> API Spring -> PostgreSQL
 ```
 
-O schema `app` não está na lista exposta pelo PostgREST. A role `app_api` é `NOLOGIN`, não possui superusuário nem `BYPASSRLS` e recebe somente privilégios explícitos no schema da aplicação.
+O schema `app` não está na lista exposta pelo PostgREST. A role `app_api` é `NOLOGIN`, não possui superusuário nem `BYPASSRLS` e recebe somente privilégios explícitos no schema da aplicação. O login runtime é `NOINHERIT`, não recebe privilégios diretos e assume `app_api` localmente em cada transação.
 
 Dentro de uma futura transação, a API validará identidade, membership e fazenda antes de configurar:
 
@@ -50,4 +50,4 @@ O valor local desaparece ao terminar a transação. A função `app.current_tena
 
 ## Supabase Auth
 
-A API já valida o JWT pelo Spring Security Resource Server e converte o UUID de `sub` em uma identidade de requisição independente do framework. E-mail, sessão e nível de autenticação são atributos opcionais; roles do token não concedem papéis organizacionais. A próxima etapa usará o `sub` para sincronizar `app.users` e depois resolverá com segurança o tenant e a fazenda ativos. Ainda não existe cliente administrativo do Supabase nem configuração obrigatória de `DataSource` na aplicação principal.
+A API valida o JWT pelo Spring Security Resource Server e converte o UUID de `sub` em uma identidade de requisição independente do framework. `SynchronizeAuthenticatedUser` persiste essa identidade em `app.users` por JDBC explícito; e-mail válido pode ser atualizado sem apagar valores por ausência, e `display_name` é preservado porque o token atual não possui fonte confiável para esse dado. Sessão e nível de autenticação continuam atributos não persistidos. Roles do token não concedem papéis organizacionais. A próxima etapa resolverá com segurança o tenant e a fazenda ativos; não existe cliente administrativo do Supabase.

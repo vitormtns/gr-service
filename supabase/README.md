@@ -35,7 +35,18 @@ A migration `identity_tenancy_foundation` cria no schema privado `app`:
 
 O schema `app` não aparece em `api.schemas` no `config.toml` e não é exposto pelo PostgREST. Não adicione policies para `anon` ou `authenticated`: o fluxo suportado é `Clientes -> API Spring -> PostgreSQL`.
 
-`app.users.id` aceitará o UUID do claim `sub`, mas não há FK para `auth.users`. Senhas, tokens e chaves do Supabase nunca pertencem às tabelas da aplicação.
+`app.users.id` recebe o UUID validado do claim `sub`, mas não há FK para `auth.users`. Senhas, tokens e chaves do Supabase nunca pertencem às tabelas da aplicação. O login runtime deve ser `NOINHERIT`, sem privilégios diretos e membro de `app_api`; a API assume essa role localmente dentro da transação.
+
+O login e sua senha são provisionamento do ambiente, não migration de schema. Para desenvolvimento, um administrador pode criar um login exclusivamente local, com uma senha não versionada:
+
+```sql
+create role gr_local_runtime
+    login noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls
+    password '<senha-local-não-versionada>';
+grant app_api to gr_local_runtime;
+```
+
+Configure `DATABASE_USERNAME=gr_local_runtime` e a senha somente no ambiente do processo. O smoke test automatiza esse provisionamento com uma role efêmera e a remove antes do reset final.
 
 Crie uma migration com um nome descritivo:
 
