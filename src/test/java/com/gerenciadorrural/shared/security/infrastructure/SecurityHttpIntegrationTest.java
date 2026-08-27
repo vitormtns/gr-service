@@ -4,6 +4,10 @@ import com.gerenciadorrural.infrastructure.database.PostgresTestEnvironment;
 import com.gerenciadorrural.infrastructure.database.SpringPostgresTestSupport;
 import com.gerenciadorrural.modules.identity.domain.InternalUserRepository;
 import com.gerenciadorrural.modules.organizations.domain.AccessibleOrganizationRepository;
+import com.gerenciadorrural.modules.organizations.application.ResolveTenantContext;
+import com.gerenciadorrural.modules.organizations.application.TenantContextNotAvailableException;
+import com.gerenciadorrural.shared.tenancy.TenantContext;
+import com.gerenciadorrural.shared.tenancy.TenantId;
 import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
@@ -37,6 +41,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.reset;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
@@ -67,6 +72,9 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
     @MockitoSpyBean
     private AccessibleOrganizationRepository accessibleOrganizationRepository;
 
+    @MockitoSpyBean
+    private ResolveTenantContext resolveTenantContext;
+
     @BeforeEach
     void clearDatabase() throws SQLException {
         PostgresTestEnvironment.clearUsers();
@@ -74,7 +82,7 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
 
     @AfterEach
     void resetRepositorySpy() {
-        reset(internalUserRepository, accessibleOrganizationRepository);
+        reset(internalUserRepository, accessibleOrganizationRepository, resolveTenantContext);
     }
 
     @Test
@@ -114,6 +122,82 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
         mockMvc.perform(get("/api/v1/me/organizations/invalid/farms")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void contextWithoutTokenReturnsExistingJson401() throws Exception {
+        mockMvc.perform(get("/api/v1/context").header("X-Request-ID", "context-without-token"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("authentication_required"))
+                .andExpect(jsonPath("$.requestId").value("context-without-token"));
+    }
+
+    @Test
+    void contextMissingOrInvalidHeadersReturnsSafe400() throws Exception {
+        String token = sign(validClaims(UUID.randomUUID()), SECRET);
+        mockMvc.perform(get("/api/v1/context").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("TENANT_CONTEXT_HEADER_MISSING"));
+        mockMvc.perform(get("/api/v1/context").header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .header("X-Organization-Id", "invalid").header("X-Farm-Id", UUID.randomUUID().toString()))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("TENANT_CONTEXT_HEADER_INVALID"));
+    }
+
+    @Test
+    void validContextReturnsOnlyTheResolvedContractAndNoStore() throws Exception {
+        UUID userId=UUID.randomUUID(), organizationId=UUID.randomUUID(), farmId=UUID.randomUUID(), membershipId=UUID.randomUUID();
+        TenantContext context=new TenantContext(new TenantId(organizationId),userId,farmId,membershipId,"MANAGER","SELECTED_FARMS");
+        doReturn(new ResolveTenantContext.Resolved(context,"Organização","Fazenda")).when(resolveTenantContext).execute(organizationId,farmId);
+        String token=sign(validClaims(userId).claim("email","hidden@example.test"),SECRET);
+        mockMvc.perform(get("/api/v1/context").header(HttpHeaders.AUTHORIZATION,"Bearer "+token).header("X-Organization-Id",organizationId).header("X-Farm-Id",farmId))
+                .andExpect(status().isOk()).andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                .andExpect(jsonPath("$.userId").value(userId.toString())).andExpect(jsonPath("$.organization.id").value(organizationId.toString()))
+                .andExpect(jsonPath("$.farm.id").value(farmId.toString())).andExpect(jsonPath("$.membership.id").value(membershipId.toString()))
+                .andExpect(jsonPath("$.membership.role").value("MANAGER")).andExpect(jsonPath("$.membership.farmScopeMode").value("SELECTED_FARMS"))
+                .andExpect(jsonPath("$.accessToken").doesNotExist()).andExpect(jsonPath("$.email").doesNotExist()).andExpect(jsonPath("$.permissions").doesNotExist());
+    }
+
+    @Test
+    void inaccessibleContextReturnsIndistinguishable404() throws Exception {
+        UUID organizationId=UUID.randomUUID(),farmId=UUID.randomUUID();
+        doThrow(new TenantContextNotAvailableException()).when(resolveTenantContext).execute(organizationId,farmId);
+        mockMvc.perform(get("/api/v1/context").header(HttpHeaders.AUTHORIZATION,"Bearer "+sign(validClaims(UUID.randomUUID()),SECRET)).header("X-Organization-Id",organizationId).header("X-Farm-Id",farmId))
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("TENANT_CONTEXT_NOT_AVAILABLE"))
+                .andExpect(jsonPath("$.message", not(containsString(organizationId.toString()))));
+    }
+
+    @Test
+    void contextEndpointUsesTheRealTransactionalPathAndRejectsCrossTenantCombinations() throws Exception {
+        UUID userA = UUID.randomUUID();
+        UUID userB = UUID.randomUUID();
+        TenantContextData contextA = insertTenantContextData(userA, "Organização A", "Fazenda A", "ALL_FARMS");
+        TenantContextData contextB = insertTenantContextData(userB, "Organização B", "Fazenda B", "SELECTED_FARMS");
+        String tokenA = sign(validClaims(userA), SECRET);
+
+        mockMvc.perform(get("/api/v1/context")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tokenA)
+                        .header("X-Organization-Id", contextA.organizationId())
+                        .header("X-Farm-Id", contextA.farmId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(userA.toString()))
+                .andExpect(jsonPath("$.organization.id").value(contextA.organizationId().toString()))
+                .andExpect(jsonPath("$.farm.id").value(contextA.farmId().toString()))
+                .andExpect(jsonPath("$.membership.id").value(contextA.membershipId().toString()))
+                .andExpect(jsonPath("$.membership.role").value("VIEWER"))
+                .andExpect(jsonPath("$.membership.farmScopeMode").value("ALL_FARMS"));
+
+        mockMvc.perform(get("/api/v1/context")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tokenA)
+                        .header("X-Organization-Id", contextB.organizationId())
+                        .header("X-Farm-Id", contextB.farmId()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("TENANT_CONTEXT_NOT_AVAILABLE"));
+
+        mockMvc.perform(get("/api/v1/context")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tokenA)
+                        .header("X-Organization-Id", contextA.organizationId())
+                        .header("X-Farm-Id", contextB.farmId()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("TENANT_CONTEXT_NOT_AVAILABLE"));
     }
 
     @Test
@@ -429,6 +513,58 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
             membership.executeUpdate();
         }
         return membershipId;
+    }
+
+    private static TenantContextData insertTenantContextData(
+            UUID userId,
+            String organizationName,
+            String farmName,
+            String farmScopeMode
+    ) throws SQLException {
+        UUID organizationId = UUID.randomUUID();
+        UUID farmId = UUID.randomUUID();
+        UUID membershipId = UUID.randomUUID();
+        try (Connection connection = PostgresTestEnvironment.adminConnection();
+             var user = connection.prepareStatement(
+                     "insert into app.users (id, status) values (?, 'ACTIVE')");
+             var organization = connection.prepareStatement(
+                     "insert into app.organizations (id, name, status) values (?, ?, 'ACTIVE')");
+             var farm = connection.prepareStatement(
+                     "insert into app.farms (id, tenant_id, name, status) values (?, ?, ?, 'ACTIVE')");
+             var membership = connection.prepareStatement("""
+                     insert into app.organization_memberships
+                         (id, tenant_id, user_id, role_key, status, farm_scope_mode)
+                     values (?, ?, ?, 'VIEWER', 'ACTIVE', ?)
+                     """);
+             var scope = connection.prepareStatement("""
+                     insert into app.membership_farm_scopes (tenant_id, membership_id, farm_id)
+                     values (?, ?, ?)
+                     """)) {
+            user.setObject(1, userId);
+            user.executeUpdate();
+            organization.setObject(1, organizationId);
+            organization.setString(2, organizationName);
+            organization.executeUpdate();
+            farm.setObject(1, farmId);
+            farm.setObject(2, organizationId);
+            farm.setString(3, farmName);
+            farm.executeUpdate();
+            membership.setObject(1, membershipId);
+            membership.setObject(2, organizationId);
+            membership.setObject(3, userId);
+            membership.setString(4, farmScopeMode);
+            membership.executeUpdate();
+            if ("SELECTED_FARMS".equals(farmScopeMode)) {
+                scope.setObject(1, organizationId);
+                scope.setObject(2, membershipId);
+                scope.setObject(3, farmId);
+                scope.executeUpdate();
+            }
+        }
+        return new TenantContextData(organizationId, farmId, membershipId);
+    }
+
+    private record TenantContextData(UUID organizationId, UUID farmId, UUID membershipId) {
     }
 
     private static void assertThatNoTenantOrOrganizationalRoleWasCreated() throws SQLException {

@@ -39,6 +39,9 @@ Estas regras valem para todo o repositório. Antes de uma decisão arquitetural,
 33. Repositories JDBC devem usar SQL qualificado, parâmetros preparados e transações Spring; não introduza ORM ou geração automática de schema.
 34. A conexão runtime usa login dedicado `NOINHERIT` e assume `app_api` com `SET LOCAL ROLE` na transação; nunca use superusuário em runtime.
 35. A sincronização de identidade usa `sub` como PK, preserva valores ausentes e não reativa usuários suspensos ou desativados.
+42. IDs enviados pelo cliente nunca comprovam acesso; `TenantContext` é imutável e existe somente como atributo da requisição.
+43. Contexto de tenant não pode usar `ThreadLocal`; apenas endpoints opt-in podem resolvê-lo e role/escopo vêm do banco.
+44. Esta fase não configura `app.current_tenant_id`.
 
 ## Convenções de implementação
 

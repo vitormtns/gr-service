@@ -7,4 +7,6 @@ import java.util.Optional;
 public interface TenantContextProvider {
 
     Optional<TenantContext> currentContext();
+
+    default TenantContext requireCurrent() { return currentContext().orElseThrow(() -> new IllegalStateException("O contexto de tenant não está disponível")); }
 }
