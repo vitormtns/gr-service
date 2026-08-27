@@ -36,6 +36,9 @@ Estas regras valem para todo o repositório. Antes de uma decisão arquitetural,
 30. Nunca aceite tenant ou fazenda apenas por claim ou header não validado contra dados da aplicação.
 31. Segredo HMAC pertence somente ao backend. Prefira JWKS quando o emissor usar assinatura assimétrica e nunca faça fallback silencioso entre modos.
 32. Testes de autenticação devem usar material criptográfico efêmero ou exclusivo de teste e não depender do Supabase remoto.
+33. Repositories JDBC devem usar SQL qualificado, parâmetros preparados e transações Spring; não introduza ORM ou geração automática de schema.
+34. A conexão runtime usa login dedicado `NOINHERIT` e assume `app_api` com `SET LOCAL ROLE` na transação; nunca use superusuário em runtime.
+35. A sincronização de identidade usa `sub` como PK, preserva valores ausentes e não reativa usuários suspensos ou desativados.
 
 ## Convenções de implementação
 

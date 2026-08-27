@@ -59,8 +59,8 @@ class ArchitectureTest {
     }
 
     @Test
-    void securityApiMustNotInterpretJwt() {
-        noClasses().that().resideInAPackage("..security.api..")
+    void apiLayersMustNotInterpretJwt() {
+        noClasses().that().resideInAnyPackage("..security.api..", "..identity.api..")
                 .should().dependOnClassesThat().resideInAnyPackage(
                         "org.springframework.security.oauth2.jwt..", "..security.infrastructure..")
                 .check(productionClasses);

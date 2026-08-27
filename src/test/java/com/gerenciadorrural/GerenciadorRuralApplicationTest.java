@@ -1,5 +1,6 @@
 package com.gerenciadorrural;
 
+import com.gerenciadorrural.infrastructure.database.SpringPostgresTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -14,7 +15,7 @@ import org.springframework.test.context.ActiveProfiles;
         "app.security.supabase.accepted-token-roles=authenticated",
         "app.security.supabase.clock-skew=1s"
 })
-class GerenciadorRuralApplicationTest {
+class GerenciadorRuralApplicationTest extends SpringPostgresTestSupport {
 
     @Test
     void contextLoads() {

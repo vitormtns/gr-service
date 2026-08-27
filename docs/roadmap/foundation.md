@@ -15,10 +15,13 @@
 - Spring Security Resource Server com validação JWT em modos explícitos JWKS e HMAC;
 - identidade imutável da requisição e endpoint protegido `GET /api/v1/me`;
 - erros JSON para 401/403 e user ID seguro no contexto de logs.
+- `DataSource` Hikari e persistência JDBC explícita no schema privado;
+- sincronização idempotente e concorrente de `sub` com `app.users`;
+- locking otimista, estados internos bloqueados e resposta persistida de `GET /api/v1/me`.
 
 ## Próxima etapa
 
-Adicionar conexão JDBC runtime e sincronizar idempotentemente o claim `sub` com o usuário interno. Depois, resolver e validar organização e fazenda ativas, criar o contexto multi-tenant, propagá-lo transacionalmente ao PostgreSQL e implementar repositories tenant-aware.
+Ler memberships, resolver e validar organização e fazenda ativas, criar o contexto multi-tenant, propagá-lo transacionalmente ao PostgreSQL e implementar autorização por escopo de fazenda.
 
 Antes de codificar, detalhe os limites entre identidade, organização e fazenda e defina como permissões e seleção de fazenda serão validadas. Não implemente rebanho, reprodução, sanidade ou assinaturas junto dessa etapa.
 

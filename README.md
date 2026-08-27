@@ -4,7 +4,7 @@ Backend do projeto provisoriamente chamado **Gerenciador Rural**. Este repositó
 
 ## Estado atual
 
-A aplicação Spring Boot valida access tokens do Supabase Auth e expõe `GET /api/v1/me` como primeiro endpoint protegido. `GET /actuator/health` permanece público; os demais caminhos exigem autenticação ou ficam bloqueados. A primeira migration persistente define usuários internos, organizações, fazendas, memberships e escopos por fazenda no schema privado `app`, com constraints multi-tenant e RLS. Persistência em runtime, sincronização de usuário e resolução de organização ou fazenda ainda não foram implementadas.
+A aplicação Spring Boot valida access tokens do Supabase Auth e expõe `GET /api/v1/me` como primeiro endpoint protegido. Esse fluxo sincroniza o UUID validado de `sub` com `app.users` por JDBC explícito, de forma idempotente e concorrente. `GET /actuator/health` permanece público; os demais caminhos exigem autenticação ou ficam bloqueados. Organização, fazenda e permissões ainda não participam do fluxo HTTP.
 
 ## Arquitetura resumida
 
@@ -12,7 +12,7 @@ A aplicação Spring Boot valida access tokens do Supabase Auth e expõe `GET /a
 - Separação lógica de escrita e leitura, sem command bus ou query bus.
 - Tenant definido pela futura `Organization`; uma organização poderá ter várias fazendas.
 - API stateless, pronta para múltiplas instâncias e workers futuros.
-- PostgreSQL gerenciado por migrations do Supabase CLI, sem alteração automática de schema.
+- PostgreSQL gerenciado por migrations do Supabase CLI, com JDBC explícito e sem alteração automática de schema.
 - Eventos de domínio versionados, com outbox e Event Sourcing apenas como decisões futuras e seletivas.
 
 Leia [a visão arquitetural](docs/architecture/overview.md) e os [ADRs](docs/adr/) antes de alterar decisões estruturais.
@@ -24,7 +24,7 @@ Leia [a visão arquitetural](docs/architecture/overview.md) e os [ADRs](docs/adr
 - Node.js e npm para as ferramentas locais de infraestrutura;
 - Docker Desktop com backend WSL 2 para operar o PostgreSQL local e executar os testes Testcontainers.
 
-Não é necessário instalar Maven nem Supabase CLI globalmente. O Wrapper usa Maven 3.9.16 e a CLI do Supabase está fixada como `devDependency` no `package.json`. A API ainda não abre conexão com o banco em runtime, mas `mvn verify` exige Docker para validar as migrations em PostgreSQL real com Testcontainers.
+Não é necessário instalar Maven nem Supabase CLI globalmente. O Wrapper usa Maven 3.9.16 e a CLI do Supabase está fixada como `devDependency` no `package.json`. A API usa um `DataSource` Hikari em runtime. `mvn verify` exige Docker porque os testes aplicam as migrations reais em PostgreSQL isolado com Testcontainers.
 
 ## Preparação do ambiente
 
@@ -39,7 +39,10 @@ Variáveis documentadas em `.env.example`:
 | --- | --- |
 | `SPRING_PROFILES_ACTIVE` | Seleciona o perfil Spring; use `local` no desenvolvimento. |
 | `SERVER_PORT` | Porta HTTP, com padrão local `8080`. |
-| `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD` | Conexão futura com o PostgreSQL; ainda não são consumidas. |
+| `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD` | Conexão JDBC obrigatória; use um login runtime dedicado e nunca versione a senha. |
+| `DATABASE_SCHEMA`, `DATABASE_RUNTIME_ROLE` | Limites fixos validados como `app` e `app_api`. |
+| `DATABASE_POOL_MAX_SIZE`, `DATABASE_POOL_MIN_IDLE` | Tamanho do pool Hikari por instância. |
+| `DATABASE_CONNECTION_TIMEOUT` | Timeout do pool em milissegundos. |
 | `SUPABASE_AUTH_MODE` | Modo explícito de validação: `JWKS` ou `HMAC`. O perfil local usa `JWKS`. |
 | `SUPABASE_AUTH_ALGORITHM` | Algoritmo único aceito: `ES256` ou `RS256` em JWKS; `HS256` em HMAC. |
 | `SUPABASE_AUTH_ISSUER` | Emissor exato esperado no claim `iss`. |
@@ -52,17 +55,22 @@ Nunca versione `.env`, senhas, tokens, `service_role` ou chaves secretas.
 
 ## Execução local
 
-No PowerShell:
+O login de conexão deve ser `NOINHERIT`, sem privilégios diretos, e possuir apenas membership em `app_api`. A aplicação executa `SET LOCAL ROLE app_api` dentro da transação; não use `postgres`, `service_role`, superusuário ou `BYPASSRLS` em runtime. No PowerShell:
 
 ```powershell
 $env:SPRING_PROFILES_ACTIVE = "local"
+$env:DATABASE_URL = "jdbc:postgresql://127.0.0.1:54322/postgres"
+$env:DATABASE_USERNAME = "<login-runtime-local>"
+$env:DATABASE_PASSWORD = "<senha-local-não-versionada>"
 .\mvnw.cmd spring-boot:run
 ```
 
 Em Bash:
 
 ```bash
-SPRING_PROFILES_ACTIVE=local ./mvnw spring-boot:run
+SPRING_PROFILES_ACTIVE=local DATABASE_URL=jdbc:postgresql://127.0.0.1:54322/postgres \
+DATABASE_USERNAME=<login-runtime-local> DATABASE_PASSWORD=<senha-local-não-versionada> \
+./mvnw spring-boot:run
 ```
 
 Verifique a aplicação em `http://localhost:8080/actuator/health`. O Actuator expõe somente o endpoint de saúde e não mostra detalhes publicamente. O perfil `local` já aponta para o issuer e o JWKS do Supabase CLI em `127.0.0.1`; nenhum segredo HMAC é necessário no stack local atual.
@@ -73,7 +81,9 @@ O fluxo é `Supabase Auth -> access token JWT -> Spring Security Resource Server
 
 O modo `JWKS` é preferencial para emissores com chaves assimétricas e suporta `ES256` ou `RS256` configurado explicitamente. O modo `HMAC` aceita somente `HS256`, exige segredo de pelo menos 32 bytes no backend e existe para projetos legados; não há fallback automático entre os modos. O stack local validado publica uma chave `ES256` em `/auth/v1/.well-known/jwks.json`.
 
-`GET /api/v1/me` representa apenas a identidade da requisição: UUID do `sub`, e-mail opcional, sessão opcional, nível de autenticação e instantes do token. Ele não consulta banco, não sincroniza `app.users` e não retorna organizações, fazendas, permissões ou claims completos. A role `authenticated` do token gera somente `ROLE_AUTHENTICATED`; papéis como `OWNER` e `ADMIN` virão dos memberships persistidos. Nenhum claim escolhe tenant ou fazenda.
+`GET /api/v1/me` executa `JWT -> AuthenticatedUser -> SynchronizeAuthenticatedUser -> app.users`. O UUID de `sub` é a chave interna; e-mail válido pode ser sincronizado, mas ausência ou valor inválido nunca apaga o valor persistido. Não existe claim confiável de nome no contrato atual, portanto `displayName` é preservado e não é atualizado pelo token. Chamadas sem mudança preservam `version` e `updatedAt`; updates reais usam locking otimista e retries limitados. Usuários `SUSPENDED` ou `DEACTIVATED` recebem `403` e nunca são reativados pelo JWT.
+
+A resposta separa identidade persistida (`userId`, `email`, `displayName`, `status`, timestamps e `version`) de `authentication` (`sessionId`, `authenticationLevel`, `issuedAt` e `expiresAt`). Ela não retorna token, claims completos, organizações, fazendas ou memberships.
 
 Sem bearer token válido, `/api/**` responde `401` em JSON. Um usuário autenticado que alcançar uma regra negada recebe `403`, também em JSON. As respostas incluem o request ID quando disponível e não revelam detalhes criptográficos.
 
@@ -111,11 +121,10 @@ Os scripts aceitam verificações locais opcionais sem reset implícito:
 ./scripts/check.sh --supabase-reset
 ```
 
-Após `mvn verify`, o smoke test opcional usa somente o Auth local, cria credenciais aleatórias em memória, inicia uma API temporária e não imprime tokens ou chaves:
+Após `mvn verify`, o smoke test opcional cria credenciais de Auth e um login PostgreSQL efêmeros, inicia uma API temporária, confirma persistência e idempotência e não imprime tokens, senhas ou chaves. O banco local é resetado ao final:
 
 ```powershell
 .\scripts\smoke-auth-local.ps1
-npm run supabase:reset
 ```
 
 Esse smoke não faz parte da CI e nunca acessa um projeto remoto.
@@ -137,7 +146,7 @@ Detalhes estão em [supabase/README.md](supabase/README.md). Toda alteração es
 
 ## Identidade e tenancy
 
-A organização é o tenant; fazendas e memberships pertencem obrigatoriamente a uma organização. Usuários são identidades globais e podem participar de vários tenants. O UUID de `app.users` corresponderá futuramente ao claim `sub` do Supabase Auth, sem FK para `auth.users` e sem armazenar senhas ou tokens.
+A organização é o tenant; fazendas e memberships pertencem obrigatoriamente a uma organização. Usuários são identidades globais e podem participar de vários tenants. O UUID de `app.users` corresponde ao claim validado `sub` do Supabase Auth, sem FK para `auth.users` e sem armazenar senhas ou tokens. A PK protege a primeira sincronização concorrente e a coluna `version` protege atualizações concorrentes.
 
 As tabelas de negócio ficam no schema privado `app`, fora dos schemas expostos pelo PostgREST. Clientes acessam o domínio exclusivamente pela API Spring. A role `app_api` e as policies RLS usam um tenant configurado localmente por transação como defesa adicional, sem substituir os futuros filtros tenant-aware dos repositories.
 
@@ -148,7 +157,7 @@ Leia o [modelo de identidade e tenancy](docs/architecture/identity-tenancy-data-
 ```text
 src/main/java/com/gerenciadorrural/
 ├── GerenciadorRuralApplication.java
-├── modules/                 # módulos de negócio futuros
+├── modules/identity/        # identidade interna persistida
 └── shared/
     ├── api/                 # convenções HTTP compartilhadas
     ├── application/         # contratos de command e query
@@ -162,10 +171,10 @@ supabase/                    # configuração, migrations e seed local
 scripts/                     # validação para Windows e Bash
 ```
 
-Cada módulo futuro seguirá `modules/<module>/{domain,application,infrastructure,api}`, com `application/command` e `application/query` quando houver casos de uso. Não crie módulos ou camadas vazias apenas para completar a árvore.
+O primeiro módulo real é `modules/identity/{domain,application,infrastructure,api}`. Módulos futuros seguem a mesma convenção, com `application/command` e `application/query` quando houver casos de uso. Não crie módulos ou camadas vazias apenas para completar a árvore.
 
 ## Banco e acesso ao domínio
 
-O schema pertence às migrations do Supabase CLI. JPA não foi incluído porque ainda não existem repositories ou entidades Java; quando houver uso real, `ddl-auto` deverá ser `validate`, nunca `update`, `create` ou `create-drop`.
+O schema pertence às migrations do Supabase CLI. O primeiro repository usa `NamedParameterJdbcTemplate`, mapeamento manual e SQL qualificado em `app.users`. JPA, Hibernate e `ddl-auto` não fazem parte da aplicação.
 
-Flutter e Angular não poderão escrever diretamente nas tabelas de negócio. Clientes chamam a API, que já autentica o bearer token; as próximas etapas sincronizarão o usuário e resolverão tenant, fazenda, permissões, capacidades e cotas. RLS será uma defesa complementar, não um substituto das regras da API.
+Flutter e Angular não podem escrever diretamente nas tabelas de negócio. Clientes chamam a API, que autentica o bearer token e sincroniza a identidade interna; as próximas etapas resolverão tenant, fazenda, permissões, capacidades e cotas. RLS será uma defesa complementar, não um substituto das regras da API.

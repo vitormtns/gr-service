@@ -1,6 +1,14 @@
 spring:
   main:
     banner-mode: "off"
+  datasource:
+    hikari:
+      maximum-pool-size: 8
+      minimum-idle: 0
+      connection-timeout: 10000
+  sql:
+    init:
+      mode: never
 
 app:
   security:
