@@ -21,26 +21,91 @@ function Get-HttpStatus {
     }
 }
 
+function Get-SafeHttpFailure {
+    param(
+        [Parameter(Mandatory)]
+        [System.Management.Automation.ErrorRecord]$ErrorRecord
+    )
+
+    $response = $ErrorRecord.Exception.Response
+    $status = if ($response) { [int]$response.StatusCode } else { $null }
+    $requestId = if ($response) { $response.Headers["X-Request-Id"] } else { $null }
+    $body = $ErrorRecord.ErrorDetails.Message
+    if (-not $body -and $response -and $response.GetResponseStream) {
+        $reader = [System.IO.StreamReader]::new($response.GetResponseStream())
+        try {
+            $body = $reader.ReadToEnd()
+        } finally {
+            $reader.Dispose()
+        }
+    }
+    $code = $null
+    if ($body) {
+        try {
+            $code = ($body | ConvertFrom-Json).code
+        } catch {
+            $code = $null
+        }
+    }
+
+    return [pscustomobject]@{
+        Status = $status
+        RequestId = $requestId
+        Code = $code
+        Body = $body
+    }
+}
+
+function Protect-DiagnosticFile {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+        [string[]]$SensitiveValues = @()
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    $content = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    if ($null -eq $content) {
+        $content = ""
+    }
+    foreach ($value in $SensitiveValues) {
+        if ($value) {
+            $content = $content.Replace([string]$value, "[PROTEGIDO]")
+        }
+    }
+    Set-Content -LiteralPath $Path -Value $content -NoNewline
+}
+
 $stdoutLog = New-TemporaryFile
 $stderrLog = New-TemporaryFile
 $apiProcess = $null
 $databaseContainer = $null
 $supabaseHealthy = $false
 $runtimeRoleCreated = $false
+$preserveDiagnostics = $false
+$primaryFailure = $null
+$cleanupFailures = [System.Collections.Generic.List[string]]::new()
 $runtimeUsername = "app_smoke_runtime"
 $runtimePassword = "smoke_$([guid]::NewGuid().ToString('N'))"
 $databaseEnvironment = @("DATABASE_URL", "DATABASE_USERNAME", "DATABASE_PASSWORD")
+$authenticationEnvironment = @(
+    "SUPABASE_AUTH_MODE",
+    "SUPABASE_AUTH_ALGORITHM",
+    "SUPABASE_AUTH_ISSUER",
+    "SUPABASE_AUTH_JWKS_URI",
+    "SUPABASE_AUTH_JWT_SECRET"
+)
+$managedEnvironment = $databaseEnvironment + $authenticationEnvironment
 $previousEnvironment = @{}
-foreach ($name in $databaseEnvironment) {
+foreach ($name in $managedEnvironment) {
     $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
 }
-$workspacePath = (Resolve-Path ".").Path
-$initialApiProcessIds = @(Get-CimInstance Win32_Process -Filter "Name = 'java.exe'" |
-        Where-Object {
-            $_.CommandLine -and $_.CommandLine.Contains($workspacePath) `
-                    -and $_.CommandLine -match "gr-service-.*\.jar"
-        } |
-        Select-Object -ExpandProperty ProcessId)
+$email = $null
+$password = $null
+$accessToken = $null
+$supabase = $null
 
 try {
     $ErrorActionPreference = "Continue"
@@ -78,6 +143,13 @@ grant app_api to $runtimeUsername;
             "DATABASE_URL", "jdbc:postgresql://127.0.0.1:54322/postgres", "Process")
     [Environment]::SetEnvironmentVariable("DATABASE_USERNAME", $runtimeUsername, "Process")
     [Environment]::SetEnvironmentVariable("DATABASE_PASSWORD", $runtimePassword, "Process")
+    [Environment]::SetEnvironmentVariable("SUPABASE_AUTH_MODE", "JWKS", "Process")
+    [Environment]::SetEnvironmentVariable("SUPABASE_AUTH_ALGORITHM", "ES256", "Process")
+    [Environment]::SetEnvironmentVariable(
+            "SUPABASE_AUTH_ISSUER", "$($supabase.API_URL)/auth/v1", "Process")
+    [Environment]::SetEnvironmentVariable(
+            "SUPABASE_AUTH_JWKS_URI", "$($supabase.API_URL)/auth/v1/.well-known/jwks.json", "Process")
+    [Environment]::SetEnvironmentVariable("SUPABASE_AUTH_JWT_SECRET", $null, "Process")
 
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
     $listener.Start()
@@ -97,7 +169,7 @@ grant app_api to $runtimeUsername;
         -RedirectStandardOutput $stdoutLog.FullName `
         -RedirectStandardError $stderrLog.FullName `
         -PassThru
-    foreach ($name in $databaseEnvironment) {
+    foreach ($name in $managedEnvironment) {
         [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
     }
 
@@ -211,12 +283,23 @@ insert into app.farms (id, tenant_id, name, status) values
     $organizations = Invoke-RestMethod -Uri $organizationsUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
     $farmsUri = "http://127.0.0.1:$port/api/v1/me/organizations/$organizationId/farms"
     $allFarms = Invoke-RestMethod -Uri $farmsUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    $contextUri = "http://127.0.0.1:$port/api/v1/context"
+    try {
+        $allFarmsContext = Invoke-WebRequest -Uri $contextUri -Method Get -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $activeFarmId } -UseBasicParsing
+    } catch {
+        $failure = Get-SafeHttpFailure -ErrorRecord $_
+        $preserveDiagnostics = $true
+        throw "GET /api/v1/context falhou: status=$($failure.Status); requestId=$($failure.RequestId); code=$($failure.Code). Logs da API foram preservados para diagnóstico."
+    }
+    $allFarmsContextBody = $allFarmsContext.Content | ConvertFrom-Json
     @"
 update app.organization_memberships set farm_scope_mode = 'SELECTED_FARMS' where id = '$membershipId'::uuid;
 insert into app.membership_farm_scopes (tenant_id, membership_id, farm_id)
 values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::uuid);
 "@ | & docker exec -i $databaseContainer psql -v ON_ERROR_STOP=1 -U postgres -d postgres | Out-Null
     $selectedFarms = Invoke-RestMethod -Uri $farmsUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    $selectedContext = Invoke-RestMethod -Uri $contextUri -Method Get -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $secondActiveFarmId }
+    $unselectedContextStatus = Get-HttpStatus -Uri $contextUri -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $activeFarmId }
     $otherFarmsUri = "http://127.0.0.1:$port/api/v1/me/organizations/$otherOrganizationId/farms"
     $otherFarms = Invoke-RestMethod -Uri $otherFarmsUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
     $suspendedMembershipFarms = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/v1/me/organizations/$suspendedMembershipOrganizationId/farms" -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
@@ -236,6 +319,9 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
     $apiLogs = (Get-Content -LiteralPath $stdoutLog.FullName -Raw -ErrorAction SilentlyContinue) `
             + (Get-Content -LiteralPath $stderrLog.FullName -Raw -ErrorAction SilentlyContinue)
     $jwks = Invoke-RestMethod -Uri "$($supabase.API_URL)/auth/v1/.well-known/jwks.json" -Method Get
+    $signingKey = @($jwks.keys | Where-Object {
+                $_.kid -eq $jwtHeader.kid -and $_.kty -eq "EC" -and $_.crv -eq "P-256"
+            })
     $requiredClaims = @("sub", "iss", "exp", "iat")
     $presentClaims = @($requiredClaims | Where-Object { $null -ne $jwtPayload.$_ })
 
@@ -243,6 +329,9 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
         SupabaseAuth = "local"
         Algorithm = $jwtHeader.alg
         Issuer = $jwtPayload.iss
+        LocalEs256Jwt = $jwtHeader.alg -eq "ES256" `
+                -and $jwtPayload.iss -eq "$($supabase.API_URL)/auth/v1" `
+                -and $signingKey.Count -eq 1
         RequiredClaimsPresent = $presentClaims.Count -eq $requiredClaims.Count
         JwksKeyCount = @($jwks.keys).Count
         ValidTokenStatus = 200
@@ -267,6 +356,9 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
         SelectedFarmsReturned = @($selectedFarms.items).Count -eq 1 `
                 -and $selectedFarms.items[0].farmId -eq $secondActiveFarmId
         OtherOrganizationFarmsIsolated = @($otherFarms.items).Count -eq 0
+        TenantContextAllFarms = $allFarmsContext.StatusCode -eq 200 -and $allFarmsContext.Headers["Cache-Control"] -match "no-store" -and $allFarmsContextBody.userId -eq $signup.user.id -and $allFarmsContextBody.organization.id -eq $organizationId -and $allFarmsContextBody.farm.id -eq $activeFarmId -and $allFarmsContextBody.membership.id -eq $membershipId -and $allFarmsContextBody.membership.farmScopeMode -eq "ALL_FARMS"
+        TenantContextSelectedFarms = $selectedContext.farm.id -eq $secondActiveFarmId -and $selectedContext.membership.farmScopeMode -eq "SELECTED_FARMS"
+        TenantContextUnselectedFarmRejected = $unselectedContextStatus -eq 404
         SuspendedMembershipFarmsIsolated = @($suspendedMembershipFarms.items).Count -eq 0
         RevokedMembershipFarmsIsolated = @($revokedMembershipFarms.items).Count -eq 0
         SuspendedOrganizationFarmsIsolated = @($suspendedOrganizationFarms.items).Count -eq 0
@@ -279,9 +371,11 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
     } | Tee-Object -Variable smokeResult
 
     $requiredChecks = @(
-        $smokeResult.RequiredClaimsPresent, $smokeResult.SubjectMatches, $smokeResult.UserPersisted,
+        $smokeResult.LocalEs256Jwt, $smokeResult.RequiredClaimsPresent,
+        $smokeResult.SubjectMatches, $smokeResult.UserPersisted,
         $smokeResult.SecondCallIdempotent, $smokeResult.AccessibleOrganizationReturned,
         $smokeResult.OtherUserOrganizationIsolated, $smokeResult.AllFarmsReturned,
+        $smokeResult.TenantContextAllFarms, $smokeResult.TenantContextSelectedFarms, $smokeResult.TenantContextUnselectedFarmRejected,
         $smokeResult.SelectedFarmsReturned, $smokeResult.OtherOrganizationFarmsIsolated,
         $smokeResult.SuspendedMembershipFarmsIsolated, $smokeResult.RevokedMembershipFarmsIsolated,
         $smokeResult.SuspendedOrganizationFarmsIsolated, $smokeResult.ArchivedOrganizationFarmsIsolated,
@@ -292,34 +386,66 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
     if ($requiredChecks -contains $false) {
         throw "O smoke local detectou um cenário de segurança ou isolamento inválido."
     }
+} catch {
+    $primaryFailure = $_
+    $preserveDiagnostics = $true
 } finally {
-    foreach ($name in $databaseEnvironment) {
+    foreach ($name in $managedEnvironment) {
         [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
     }
-    if ($apiProcess -and -not $apiProcess.HasExited) {
-        Stop-Process -Id $apiProcess.Id -Force
-        Wait-Process -Id $apiProcess.Id -Timeout 10 -ErrorAction SilentlyContinue
-    }
-    $newApiProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'java.exe'" |
-            Where-Object {
-                $_.CommandLine -and $_.CommandLine.Contains($workspacePath) `
-                        -and $_.CommandLine -match "gr-service-.*\.jar" `
-                        -and $_.ProcessId -notin $initialApiProcessIds
-            })
-    foreach ($process in $newApiProcesses) {
-        Stop-Process -Id $process.ProcessId -Force
-        Wait-Process -Id $process.ProcessId -Timeout 10 -ErrorAction SilentlyContinue
-    }
-    if ($runtimeRoleCreated -and $databaseContainer) {
-        "drop role if exists $runtimeUsername;" |
-                & docker exec -i $databaseContainer psql -v ON_ERROR_STOP=1 -U postgres -d postgres | Out-Null
-    }
-    if ($supabaseHealthy) {
-        & .\node_modules\.bin\supabase.cmd db reset | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "O reset final do Supabase local falhou."
+    try {
+        if ($apiProcess -and -not $apiProcess.HasExited) {
+            Stop-Process -Id $apiProcess.Id -Force
+            Wait-Process -Id $apiProcess.Id -Timeout 10 -ErrorAction SilentlyContinue
         }
+    } catch {
+        $cleanupFailures.Add("Não foi possível encerrar a API iniciada pelo smoke.")
     }
-    Remove-Item -LiteralPath $stdoutLog.FullName -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $stderrLog.FullName -Force -ErrorAction SilentlyContinue
+    try {
+        if ($runtimeRoleCreated -and $databaseContainer) {
+            "drop role if exists $runtimeUsername;" |
+                    & docker exec -i $databaseContainer psql -v ON_ERROR_STOP=1 -U postgres -d postgres | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "drop role falhou"
+            }
+        }
+    } catch {
+        $cleanupFailures.Add("Não foi possível remover o login runtime efêmero.")
+    }
+    try {
+        if ($supabaseHealthy) {
+            & .\node_modules\.bin\supabase.cmd db reset | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "reset falhou"
+            }
+        }
+    } catch {
+        $cleanupFailures.Add("O reset final do Supabase local falhou.")
+    }
+    $preserveDiagnostics = $preserveDiagnostics -or $cleanupFailures.Count -gt 0
+    if ($preserveDiagnostics) {
+        $sensitiveValues = @(
+            $runtimePassword, $email, $password, $accessToken,
+            $supabase.PUBLISHABLE_KEY, $supabase.ANON_KEY, $supabase.SECRET_KEY,
+            $supabase.SERVICE_ROLE_KEY, $supabase.JWT_SECRET,
+            $supabase.S3_PROTOCOL_ACCESS_KEY_ID, $supabase.S3_PROTOCOL_ACCESS_KEY_SECRET
+        )
+        Protect-DiagnosticFile -Path $stdoutLog.FullName -SensitiveValues $sensitiveValues
+        Protect-DiagnosticFile -Path $stderrLog.FullName -SensitiveValues $sensitiveValues
+        Write-Host "Logs temporários da API preservados: $($stdoutLog.FullName) e $($stderrLog.FullName)"
+    } else {
+        Remove-Item -LiteralPath $stdoutLog.FullName -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrLog.FullName -Force -ErrorAction SilentlyContinue
+    }
+}
+
+if ($primaryFailure) {
+    $message = $primaryFailure.Exception.Message
+    if ($cleanupFailures.Count -gt 0) {
+        $message += " Falhas de limpeza: $($cleanupFailures -join ' ')"
+    }
+    throw $message
+}
+if ($cleanupFailures.Count -gt 0) {
+    throw ($cleanupFailures -join " ")
 }

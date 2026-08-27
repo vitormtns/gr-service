@@ -1,0 +1,1 @@
+package com.gerenciadorrural.shared.tenancy; public final class TenantContextRequestAttribute { private TenantContextRequestAttribute(){} public static final String NAME = TenantContextRequestAttribute.class.getName()+".context"; }
