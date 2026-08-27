@@ -159,6 +159,14 @@ grant app_api to $runtimeUsername;
     $otherUserId = [guid]::NewGuid().ToString()
     $otherOrganizationId = [guid]::NewGuid().ToString()
     $otherMembershipId = [guid]::NewGuid().ToString()
+    $activeFarmId = [guid]::NewGuid().ToString()
+    $secondActiveFarmId = [guid]::NewGuid().ToString()
+    $inactiveFarmId = [guid]::NewGuid().ToString()
+    $archivedFarmId = [guid]::NewGuid().ToString()
+    $suspendedMembershipOrganizationId = [guid]::NewGuid().ToString()
+    $revokedMembershipOrganizationId = [guid]::NewGuid().ToString()
+    $suspendedOrganizationId = [guid]::NewGuid().ToString()
+    $archivedOrganizationId = [guid]::NewGuid().ToString()
     $organizationSql = @"
 insert into app.organizations (id, name, status)
 values ('$organizationId'::uuid, 'Organização smoke', 'ACTIVE');
@@ -166,6 +174,11 @@ insert into app.organization_memberships
     (id, tenant_id, user_id, role_key, status, farm_scope_mode)
 values
     ('$membershipId'::uuid, '$organizationId'::uuid, '$($signup.user.id)'::uuid, 'OWNER', 'ACTIVE', 'ALL_FARMS');
+insert into app.farms (id, tenant_id, name, status) values
+    ('$activeFarmId'::uuid, '$organizationId'::uuid, 'Fazenda ativa A', 'ACTIVE'),
+    ('$secondActiveFarmId'::uuid, '$organizationId'::uuid, 'Fazenda ativa B', 'ACTIVE'),
+    ('$inactiveFarmId'::uuid, '$organizationId'::uuid, 'Fazenda inativa', 'INACTIVE'),
+    ('$archivedFarmId'::uuid, '$organizationId'::uuid, 'Fazenda arquivada', 'ARCHIVED');
 insert into app.users (id, status)
 values ('$otherUserId'::uuid, 'ACTIVE');
 insert into app.organizations (id, name, status)
@@ -174,6 +187,21 @@ insert into app.organization_memberships
     (id, tenant_id, user_id, role_key, status, farm_scope_mode)
 values
     ('$otherMembershipId'::uuid, '$otherOrganizationId'::uuid, '$otherUserId'::uuid, 'VIEWER', 'ACTIVE', 'SELECTED_FARMS');
+insert into app.organizations (id, name, status) values
+    ('$suspendedMembershipOrganizationId'::uuid, 'Membership suspenso', 'ACTIVE'),
+    ('$revokedMembershipOrganizationId'::uuid, 'Membership revogado', 'ACTIVE'),
+    ('$suspendedOrganizationId'::uuid, 'Organização suspensa', 'SUSPENDED'),
+    ('$archivedOrganizationId'::uuid, 'Organização arquivada', 'ARCHIVED');
+insert into app.organization_memberships (id, tenant_id, user_id, role_key, status, farm_scope_mode) values
+    ('$([guid]::NewGuid())'::uuid, '$suspendedMembershipOrganizationId'::uuid, '$($signup.user.id)'::uuid, 'VIEWER', 'SUSPENDED', 'ALL_FARMS'),
+    ('$([guid]::NewGuid())'::uuid, '$revokedMembershipOrganizationId'::uuid, '$($signup.user.id)'::uuid, 'VIEWER', 'REVOKED', 'ALL_FARMS'),
+    ('$([guid]::NewGuid())'::uuid, '$suspendedOrganizationId'::uuid, '$($signup.user.id)'::uuid, 'VIEWER', 'ACTIVE', 'ALL_FARMS'),
+    ('$([guid]::NewGuid())'::uuid, '$archivedOrganizationId'::uuid, '$($signup.user.id)'::uuid, 'VIEWER', 'ACTIVE', 'ALL_FARMS');
+insert into app.farms (id, tenant_id, name, status) values
+    ('$([guid]::NewGuid())'::uuid, '$suspendedMembershipOrganizationId'::uuid, 'Fazenda bloqueada', 'ACTIVE'),
+    ('$([guid]::NewGuid())'::uuid, '$revokedMembershipOrganizationId'::uuid, 'Fazenda bloqueada', 'ACTIVE'),
+    ('$([guid]::NewGuid())'::uuid, '$suspendedOrganizationId'::uuid, 'Fazenda bloqueada', 'ACTIVE'),
+    ('$([guid]::NewGuid())'::uuid, '$archivedOrganizationId'::uuid, 'Fazenda bloqueada', 'ACTIVE');
 "@
     $organizationSql | & docker exec -i $databaseContainer psql -v ON_ERROR_STOP=1 -U postgres -d postgres | Out-Null
     if ($LASTEXITCODE -ne 0) {
@@ -181,6 +209,20 @@ values
     }
     $organizationsUri = "http://127.0.0.1:$port/api/v1/me/organizations"
     $organizations = Invoke-RestMethod -Uri $organizationsUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    $farmsUri = "http://127.0.0.1:$port/api/v1/me/organizations/$organizationId/farms"
+    $allFarms = Invoke-RestMethod -Uri $farmsUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    @"
+update app.organization_memberships set farm_scope_mode = 'SELECTED_FARMS' where id = '$membershipId'::uuid;
+insert into app.membership_farm_scopes (tenant_id, membership_id, farm_id)
+values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::uuid);
+"@ | & docker exec -i $databaseContainer psql -v ON_ERROR_STOP=1 -U postgres -d postgres | Out-Null
+    $selectedFarms = Invoke-RestMethod -Uri $farmsUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    $otherFarmsUri = "http://127.0.0.1:$port/api/v1/me/organizations/$otherOrganizationId/farms"
+    $otherFarms = Invoke-RestMethod -Uri $otherFarmsUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    $suspendedMembershipFarms = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/v1/me/organizations/$suspendedMembershipOrganizationId/farms" -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    $revokedMembershipFarms = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/v1/me/organizations/$revokedMembershipOrganizationId/farms" -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    $suspendedOrganizationFarms = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/v1/me/organizations/$suspendedOrganizationId/farms" -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    $archivedOrganizationFarms = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/v1/me/organizations/$archivedOrganizationId/farms" -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
     $storedVersion = (& docker exec $databaseContainer psql -At -U postgres -d postgres `
             -c "select version from app.users where id = '$($signup.user.id)'::uuid").Trim()
     $sensitiveColumnCount = (& docker exec $databaseContainer psql -At -U postgres -d postgres `
@@ -217,11 +259,38 @@ values
         OtherUserOrganizationIsolated = @($organizations.items).organizationId -notcontains $otherOrganizationId
         FarmsOrPermissionsReturned = $null -ne $organizations.items[0].farmId `
                 -or $null -ne $organizations.items[0].permissions
+        AllFarmsReturned = @($allFarms.items).Count -eq 2 `
+                -and @($allFarms.items).farmId -contains $activeFarmId `
+                -and @($allFarms.items).farmId -contains $secondActiveFarmId `
+                -and @($allFarms.items).farmId -notcontains $inactiveFarmId `
+                -and @($allFarms.items).farmId -notcontains $archivedFarmId
+        SelectedFarmsReturned = @($selectedFarms.items).Count -eq 1 `
+                -and $selectedFarms.items[0].farmId -eq $secondActiveFarmId
+        OtherOrganizationFarmsIsolated = @($otherFarms.items).Count -eq 0
+        SuspendedMembershipFarmsIsolated = @($suspendedMembershipFarms.items).Count -eq 0
+        RevokedMembershipFarmsIsolated = @($revokedMembershipFarms.items).Count -eq 0
+        SuspendedOrganizationFarmsIsolated = @($suspendedOrganizationFarms.items).Count -eq 0
+        ArchivedOrganizationFarmsIsolated = @($archivedOrganizationFarms.items).Count -eq 0
         SensitiveColumnsFound = [int]$sensitiveColumnCount
         MissingTokenStatus = $missingTokenStatus
         AlteredTokenStatus = $alteredTokenStatus
         RawTokenFoundInApiLog = $apiLogs.Contains($accessToken)
         EmailFoundInApiLog = $apiLogs.Contains($email)
+    } | Tee-Object -Variable smokeResult
+
+    $requiredChecks = @(
+        $smokeResult.RequiredClaimsPresent, $smokeResult.SubjectMatches, $smokeResult.UserPersisted,
+        $smokeResult.SecondCallIdempotent, $smokeResult.AccessibleOrganizationReturned,
+        $smokeResult.OtherUserOrganizationIsolated, $smokeResult.AllFarmsReturned,
+        $smokeResult.SelectedFarmsReturned, $smokeResult.OtherOrganizationFarmsIsolated,
+        $smokeResult.SuspendedMembershipFarmsIsolated, $smokeResult.RevokedMembershipFarmsIsolated,
+        $smokeResult.SuspendedOrganizationFarmsIsolated, $smokeResult.ArchivedOrganizationFarmsIsolated,
+        ($smokeResult.MissingTokenStatus -eq 401), ($smokeResult.AlteredTokenStatus -eq 401),
+        (-not $smokeResult.FarmsOrPermissionsReturned), ($smokeResult.SensitiveColumnsFound -eq 0),
+        (-not $smokeResult.RawTokenFoundInApiLog), (-not $smokeResult.EmailFoundInApiLog)
+    )
+    if ($requiredChecks -contains $false) {
+        throw "O smoke local detectou um cenário de segurança ou isolamento inválido."
     }
 } finally {
     foreach ($name in $databaseEnvironment) {
@@ -247,6 +316,9 @@ values
     }
     if ($supabaseHealthy) {
         & .\node_modules\.bin\supabase.cmd db reset | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "O reset final do Supabase local falhou."
+        }
     }
     Remove-Item -LiteralPath $stdoutLog.FullName -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stderrLog.FullName -Force -ErrorAction SilentlyContinue

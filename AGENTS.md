@@ -69,3 +69,6 @@ Toda tarefa deve informar de forma objetiva:
 4. Funções `SECURITY DEFINER` devem usar `search_path` fixo e seguro, sem SQL dinâmico.
 5. Revogue a execução de funções de bootstrap de `PUBLIC`; conceda-a somente à role de aplicação necessária.
 6. Papéis organizacionais são lidos de `organization_memberships.role_key`, nunca de claims do JWT.
+7. `organizationId` informado pelo cliente nunca prova acesso e `userId` nunca é recebido para listar fazendas.
+8. `ALL_FARMS` nunca ignora os estados da fazenda; `SELECTED_FARMS` exige escopo do mesmo membership e tenant.
+9. O bootstrap de fazendas não cria `TenantContext` nem configura `app.current_tenant_id`.

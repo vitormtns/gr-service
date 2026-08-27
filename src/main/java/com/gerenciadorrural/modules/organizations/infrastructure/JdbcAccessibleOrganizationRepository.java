@@ -2,7 +2,7 @@ package com.gerenciadorrural.modules.organizations.infrastructure;
 
 import com.gerenciadorrural.modules.organizations.domain.AccessibleOrganization;
 import com.gerenciadorrural.modules.organizations.domain.AccessibleOrganizationRepository;
-import com.gerenciadorrural.shared.infrastructure.database.TransactionalDatabaseRole;
+import com.gerenciadorrural.shared.infrastructure.database.TransactionalCurrentUserContext;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -20,24 +20,19 @@ public class JdbcAccessibleOrganizationRepository implements AccessibleOrganizat
             JdbcAccessibleOrganizationRepository::mapAccessibleOrganization;
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
-    private final TransactionalDatabaseRole databaseRole;
+    private final TransactionalCurrentUserContext currentUserContext;
 
     public JdbcAccessibleOrganizationRepository(
             NamedParameterJdbcTemplate jdbcTemplate,
-            TransactionalDatabaseRole databaseRole
+            TransactionalCurrentUserContext currentUserContext
     ) {
         this.jdbcTemplate = jdbcTemplate;
-        this.databaseRole = databaseRole;
+        this.currentUserContext = currentUserContext;
     }
 
     @Override
     public List<AccessibleOrganization> findActiveForCurrentUser(UUID userId) {
-        databaseRole.assumeApplicationRole();
-        jdbcTemplate.queryForObject(
-                "select set_config('app.current_user_id', :userId, true)",
-                new MapSqlParameterSource("userId", userId.toString()),
-                String.class
-        );
+        currentUserContext.configure(userId);
         return jdbcTemplate.query(
                 "select organization_id, organization_name, membership_id, role_key, farm_scope_mode "
                         + "from app.list_current_user_organizations()",

@@ -85,6 +85,8 @@ O modo `JWKS` é preferencial para emissores com chaves assimétricas e suporta 
 
 `GET /api/v1/me/organizations` executa `JWT -> AuthenticatedUser -> SynchronizeAuthenticatedUser -> app.current_user_id transacional -> app.list_current_user_organizations()`. A resposta é `{ "items": [] }` quando não há memberships acessíveis e cada item contém somente `organizationId`, `organizationName`, `membershipId`, `role` e `farmScopeMode`. A função de bootstrap não recebe `userId`, não retorna fazendas e não cria `TenantContext`; `role` vem de `organization_memberships.role_key`, nunca do JWT. A próxima etapa será listar fazendas acessíveis e validar os modos `ALL_FARMS` e `SELECTED_FARMS`.
 
+`GET /api/v1/me/organizations/{organizationId}/farms` valida o acesso à organização usando o usuário autenticado, sem confiar no UUID informado pela URL. Para `ALL_FARMS`, retorna todas as fazendas `ACTIVE` da organização; para `SELECTED_FARMS`, somente as fazendas `ACTIVE` vinculadas ao mesmo membership. Organizações inacessíveis e estados bloqueados resultam em `{ "items": [] }`, sem revelar a existência do recurso. A fase ainda não seleciona tenant ou fazenda.
+
 A resposta separa identidade persistida (`userId`, `email`, `displayName`, `status`, timestamps e `version`) de `authentication` (`sessionId`, `authenticationLevel`, `issuedAt` e `expiresAt`). Ela não retorna token, claims completos, organizações, fazendas ou memberships.
 
 Sem bearer token válido, `/api/**` responde `401` em JSON. Um usuário autenticado que alcançar uma regra negada recebe `403`, também em JSON. As respostas incluem o request ID quando disponível e não revelam detalhes criptográficos.

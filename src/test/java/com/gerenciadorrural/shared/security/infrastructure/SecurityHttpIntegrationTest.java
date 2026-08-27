@@ -103,6 +103,20 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
     }
 
     @Test
+    void farmsWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(get("/api/v1/me/organizations/00000000-0000-0000-0000-000000000001/farms"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void farmsWithAnInvalidOrganizationIdReturn400() throws Exception {
+        String token = sign(validClaims(UUID.randomUUID()), SECRET);
+        mockMvc.perform(get("/api/v1/me/organizations/invalid/farms")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void validTokenSynchronizesTheUserAndReturnsAnEmptyOrganizationList() throws Exception {
         UUID userId = UUID.randomUUID();
         String token = sign(validClaims(userId), SECRET);
