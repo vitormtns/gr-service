@@ -50,4 +50,4 @@ O valor local desaparece ao terminar a transação. A função `app.current_tena
 
 ## Supabase Auth
 
-A próxima etapa validará o JWT, usará o `sub` para sincronizar `app.users` e resolverá com segurança o tenant e a fazenda ativos. Até lá não existe integração HTTP, cliente do Supabase Auth ou configuração obrigatória de `DataSource` na aplicação principal.
+A API já valida o JWT pelo Spring Security Resource Server e converte o UUID de `sub` em uma identidade de requisição independente do framework. E-mail, sessão e nível de autenticação são atributos opcionais; roles do token não concedem papéis organizacionais. A próxima etapa usará o `sub` para sincronizar `app.users` e depois resolverá com segurança o tenant e a fazenda ativos. Ainda não existe cliente administrativo do Supabase nem configuração obrigatória de `DataSource` na aplicação principal.

@@ -17,6 +17,8 @@ npm run supabase:stop
 
 Os serviços locais expõem a API em `127.0.0.1:54321`, PostgreSQL em `127.0.0.1:54322`, Studio em `127.0.0.1:54323` e Mailpit em `127.0.0.1:54324`.
 
+O Auth local validado nesta versão emite access tokens `ES256` com issuer `http://127.0.0.1:54321/auth/v1`, audience e role técnica `authenticated`. O endpoint `/auth/v1/.well-known/jwks.json` publica a chave pública necessária; a API usa esse JWKS no perfil `local`, sem ler o JWT secret legado exibido pela CLI. Não presuma que um projeto remoto usa o mesmo algoritmo: confira as signing keys do projeto e configure o modo explicitamente.
+
 Analytics/Vector permanece desativado nesta fundação. No Windows, a coleta local de logs exigiria expor o daemon Docker em `tcp://localhost:2375`; essa superfície administrativa não é necessária para o banco e a API locais.
 
 ## Schema da aplicação
