@@ -154,14 +154,41 @@ grant app_api to $runtimeUsername;
     $meUri = "http://127.0.0.1:$port/api/v1/me"
     $me = Invoke-RestMethod -Uri $meUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
     $meAgain = Invoke-RestMethod -Uri $meUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
+    $organizationId = [guid]::NewGuid().ToString()
+    $membershipId = [guid]::NewGuid().ToString()
+    $otherUserId = [guid]::NewGuid().ToString()
+    $otherOrganizationId = [guid]::NewGuid().ToString()
+    $otherMembershipId = [guid]::NewGuid().ToString()
+    $organizationSql = @"
+insert into app.organizations (id, name, status)
+values ('$organizationId'::uuid, 'Organização smoke', 'ACTIVE');
+insert into app.organization_memberships
+    (id, tenant_id, user_id, role_key, status, farm_scope_mode)
+values
+    ('$membershipId'::uuid, '$organizationId'::uuid, '$($signup.user.id)'::uuid, 'OWNER', 'ACTIVE', 'ALL_FARMS');
+insert into app.users (id, status)
+values ('$otherUserId'::uuid, 'ACTIVE');
+insert into app.organizations (id, name, status)
+values ('$otherOrganizationId'::uuid, 'Organização de outro usuário', 'ACTIVE');
+insert into app.organization_memberships
+    (id, tenant_id, user_id, role_key, status, farm_scope_mode)
+values
+    ('$otherMembershipId'::uuid, '$otherOrganizationId'::uuid, '$otherUserId'::uuid, 'VIEWER', 'ACTIVE', 'SELECTED_FARMS');
+"@
+    $organizationSql | & docker exec -i $databaseContainer psql -v ON_ERROR_STOP=1 -U postgres -d postgres | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Não foi possível preparar os dados temporários de organizações."
+    }
+    $organizationsUri = "http://127.0.0.1:$port/api/v1/me/organizations"
+    $organizations = Invoke-RestMethod -Uri $organizationsUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
     $storedVersion = (& docker exec $databaseContainer psql -At -U postgres -d postgres `
             -c "select version from app.users where id = '$($signup.user.id)'::uuid").Trim()
     $sensitiveColumnCount = (& docker exec $databaseContainer psql -At -U postgres -d postgres `
             -c "select count(*) from information_schema.columns where table_schema = 'app' and table_name = 'users' and column_name in ('password', 'token', 'access_token', 'refresh_token')").Trim()
     $missingTokenStatus = Get-HttpStatus -Uri $meUri
-    $lastCharacter = $accessToken[$accessToken.Length - 1]
-    $replacement = if ($lastCharacter -eq "A") { "B" } else { "A" }
-    $alteredToken = $accessToken.Substring(0, $accessToken.Length - 1) + $replacement
+    $signature = $segments[2]
+    $replacement = if ($signature[0] -eq "A") { "B" } else { "A" }
+    $alteredToken = "$($segments[0]).$($segments[1]).$replacement$($signature.Substring(1))"
     $alteredTokenStatus = Get-HttpStatus -Uri $meUri -Headers @{ Authorization = "Bearer $alteredToken" }
 
     $apiLogs = (Get-Content -LiteralPath $stdoutLog.FullName -Raw -ErrorAction SilentlyContinue) `
@@ -181,6 +208,15 @@ grant app_api to $runtimeUsername;
         UserPersisted = $storedVersion -eq "0"
         SecondCallIdempotent = $meAgain.version -eq $me.version `
                 -and $meAgain.updatedAt -eq $me.updatedAt
+        OrganizationsEndpointStatus = 200
+        AccessibleOrganizationReturned = @($organizations.items).Count -eq 1 `
+                -and $organizations.items[0].organizationId -eq $organizationId `
+                -and $organizations.items[0].membershipId -eq $membershipId `
+                -and $organizations.items[0].role -eq "OWNER" `
+                -and $organizations.items[0].farmScopeMode -eq "ALL_FARMS"
+        OtherUserOrganizationIsolated = @($organizations.items).organizationId -notcontains $otherOrganizationId
+        FarmsOrPermissionsReturned = $null -ne $organizations.items[0].farmId `
+                -or $null -ne $organizations.items[0].permissions
         SensitiveColumnsFound = [int]$sensitiveColumnCount
         MissingTokenStatus = $missingTokenStatus
         AlteredTokenStatus = $alteredTokenStatus

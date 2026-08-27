@@ -60,3 +60,12 @@ Toda tarefa deve informar de forma objetiva:
 5. limitações, decisões adiadas e desvios justificados;
 6. `git status` final;
 7. próximo passo recomendado, sem implementá-lo sem autorização.
+
+## Bootstrap de organizações
+
+1. Nunca liste organizações antes de validar e sincronizar o usuário autenticado.
+2. Nunca receba `userId` do cliente para bootstrap de organizações ou tenancy.
+3. O contexto de usuário para bootstrap deve ser transacional e configurado com `set_config(..., true)`.
+4. Funções `SECURITY DEFINER` devem usar `search_path` fixo e seguro, sem SQL dinâmico.
+5. Revogue a execução de funções de bootstrap de `PUBLIC`; conceda-a somente à role de aplicação necessária.
+6. Papéis organizacionais são lidos de `organization_memberships.role_key`, nunca de claims do JWT.

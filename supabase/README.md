@@ -48,6 +48,12 @@ grant app_api to gr_local_runtime;
 
 Configure `DATABASE_USERNAME=gr_local_runtime` e a senha somente no ambiente do processo. O smoke test automatiza esse provisionamento com uma role efêmera e a remove antes do reset final.
 
+## Bootstrap de organizações
+
+Antes de qualquer seleção de tenant, a API usa o UUID já validado do usuário autenticado para configurar `app.current_user_id` localmente na transação. A função `app.list_current_user_organizations()` não recebe usuário como argumento e retorna somente memberships e organizações `ACTIVE` daquele contexto. Ela é `SECURITY DEFINER`, tem `search_path` vazio e execução restrita a `app_api`; `PUBLIC`, `anon` e `authenticated` não podem executá-la.
+
+Esse fluxo não seleciona organização ou fazenda, não aceita header de tenant e não configura `app.current_tenant_id`. A próxima etapa é listar fazendas acessíveis, aplicar `ALL_FARMS` e `SELECTED_FARMS` e validar o pertencimento da fazenda.
+
 Crie uma migration com um nome descritivo:
 
 ```bash

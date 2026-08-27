@@ -3,6 +3,7 @@ package com.gerenciadorrural.shared.security.infrastructure;
 import com.gerenciadorrural.infrastructure.database.PostgresTestEnvironment;
 import com.gerenciadorrural.infrastructure.database.SpringPostgresTestSupport;
 import com.gerenciadorrural.modules.identity.domain.InternalUserRepository;
+import com.gerenciadorrural.modules.organizations.domain.AccessibleOrganizationRepository;
 import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
@@ -63,6 +64,9 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
     @MockitoSpyBean
     private InternalUserRepository internalUserRepository;
 
+    @MockitoSpyBean
+    private AccessibleOrganizationRepository accessibleOrganizationRepository;
+
     @BeforeEach
     void clearDatabase() throws SQLException {
         PostgresTestEnvironment.clearUsers();
@@ -70,7 +74,7 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
 
     @AfterEach
     void resetRepositorySpy() {
-        reset(internalUserRepository);
+        reset(internalUserRepository, accessibleOrganizationRepository);
     }
 
     @Test
@@ -89,6 +93,63 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
                 .andExpect(jsonPath("$.status").value(401))
                 .andExpect(jsonPath("$.requestId").value("request-without-token"))
                 .andExpect(header().string("X-Request-ID", "request-without-token"));
+    }
+
+    @Test
+    void organizationsWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(get("/api/v1/me/organizations"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("authentication_required"));
+    }
+
+    @Test
+    void validTokenSynchronizesTheUserAndReturnsAnEmptyOrganizationList() throws Exception {
+        UUID userId = UUID.randomUUID();
+        String token = sign(validClaims(userId), SECRET);
+
+        mockMvc.perform(get("/api/v1/me/organizations").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items").isArray())
+                .andExpect(jsonPath("$.items").isEmpty());
+    }
+
+    @Test
+    void organizationsEndpointReturnsOnlyActiveMembershipsOfTheAuthenticatedUser() throws Exception {
+        UUID userA = UUID.randomUUID();
+        UUID userB = UUID.randomUUID();
+        insertActiveUser(userA);
+        insertActiveUser(userB);
+        UUID visibleMembership = insertOrganizationMembership(userA, "Organização visível", "ACTIVE", "ACTIVE",
+                "OWNER", "ALL_FARMS");
+        insertOrganizationMembership(userA, "Organização bloqueada", "ACTIVE", "SUSPENDED", "ADMIN", "ALL_FARMS");
+        insertOrganizationMembership(userB, "Organização de outra pessoa", "ACTIVE", "ACTIVE", "VIEWER", "SELECTED_FARMS");
+        String token = sign(validClaims(userA).claim("role", "authenticated"), SECRET);
+
+        mockMvc.perform(get("/api/v1/me/organizations").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].membershipId").value(visibleMembership.toString()))
+                .andExpect(jsonPath("$.items[0].organizationName").value("Organização visível"))
+                .andExpect(jsonPath("$.items[0].role").value("OWNER"))
+                .andExpect(jsonPath("$.items[0].farmScopeMode").value("ALL_FARMS"))
+                .andExpect(jsonPath("$.items[0].accessToken").doesNotExist())
+                .andExpect(jsonPath("$.items[0].farmId").doesNotExist())
+                .andExpect(jsonPath("$.items[0].permissions").doesNotExist());
+    }
+
+    @Test
+    void organizationDatabaseFailureReturnsASafeResponse() throws Exception {
+        doThrow(new CannotGetJdbcConnectionException("database-host.example.test:5432"))
+                .when(accessibleOrganizationRepository).findActiveForCurrentUser(any());
+        String token = sign(validClaims(UUID.randomUUID()), SECRET);
+
+        mockMvc.perform(get("/api/v1/me/organizations")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .header("X-Request-ID", "organization-database-failure"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("IDENTITY_PERSISTENCE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.requestId").value("organization-database-failure"))
+                .andExpect(jsonPath("$.message").value(not(containsString("database-host"))));
     }
 
     @Test
@@ -313,6 +374,47 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
             statement.executeUpdate();
         }
         return id;
+    }
+
+    private static void insertActiveUser(UUID userId) throws SQLException {
+        try (Connection connection = PostgresTestEnvironment.adminConnection();
+             var statement = connection.prepareStatement("insert into app.users (id, status) values (?, 'ACTIVE')")) {
+            statement.setObject(1, userId);
+            statement.executeUpdate();
+        }
+    }
+
+    private static UUID insertOrganizationMembership(
+            UUID userId,
+            String organizationName,
+            String organizationStatus,
+            String membershipStatus,
+            String role,
+            String farmScopeMode
+    ) throws SQLException {
+        UUID organizationId = UUID.randomUUID();
+        UUID membershipId = UUID.randomUUID();
+        try (Connection connection = PostgresTestEnvironment.adminConnection();
+             var organization = connection.prepareStatement(
+                     "insert into app.organizations (id, name, status) values (?, ?, ?)");
+             var membership = connection.prepareStatement("""
+                     insert into app.organization_memberships
+                         (id, tenant_id, user_id, role_key, status, farm_scope_mode)
+                     values (?, ?, ?, ?, ?, ?)
+                     """)) {
+            organization.setObject(1, organizationId);
+            organization.setString(2, organizationName);
+            organization.setString(3, organizationStatus);
+            organization.executeUpdate();
+            membership.setObject(1, membershipId);
+            membership.setObject(2, organizationId);
+            membership.setObject(3, userId);
+            membership.setString(4, role);
+            membership.setString(5, membershipStatus);
+            membership.setString(6, farmScopeMode);
+            membership.executeUpdate();
+        }
+        return membershipId;
     }
 
     private static void assertThatNoTenantOrOrganizationalRoleWasCreated() throws SQLException {

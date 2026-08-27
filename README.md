@@ -4,7 +4,7 @@ Backend do projeto provisoriamente chamado **Gerenciador Rural**. Este repositó
 
 ## Estado atual
 
-A aplicação Spring Boot valida access tokens do Supabase Auth e expõe `GET /api/v1/me` como primeiro endpoint protegido. Esse fluxo sincroniza o UUID validado de `sub` com `app.users` por JDBC explícito, de forma idempotente e concorrente. `GET /actuator/health` permanece público; os demais caminhos exigem autenticação ou ficam bloqueados. Organização, fazenda e permissões ainda não participam do fluxo HTTP.
+A aplicação Spring Boot valida access tokens do Supabase Auth e expõe os endpoints protegidos `GET /api/v1/me` e `GET /api/v1/me/organizations`. Ambos sincronizam o UUID validado de `sub` com `app.users` por JDBC explícito, de forma idempotente e concorrente. O segundo lista somente as organizações ativas acessíveis ao usuário, sem selecionar tenant. `GET /actuator/health` permanece público; os demais caminhos exigem autenticação ou ficam bloqueados.
 
 ## Arquitetura resumida
 
@@ -83,6 +83,8 @@ O modo `JWKS` é preferencial para emissores com chaves assimétricas e suporta 
 
 `GET /api/v1/me` executa `JWT -> AuthenticatedUser -> SynchronizeAuthenticatedUser -> app.users`. O UUID de `sub` é a chave interna; e-mail válido pode ser sincronizado, mas ausência ou valor inválido nunca apaga o valor persistido. Não existe claim confiável de nome no contrato atual, portanto `displayName` é preservado e não é atualizado pelo token. Chamadas sem mudança preservam `version` e `updatedAt`; updates reais usam locking otimista e retries limitados. Usuários `SUSPENDED` ou `DEACTIVATED` recebem `403` e nunca são reativados pelo JWT.
 
+`GET /api/v1/me/organizations` executa `JWT -> AuthenticatedUser -> SynchronizeAuthenticatedUser -> app.current_user_id transacional -> app.list_current_user_organizations()`. A resposta é `{ "items": [] }` quando não há memberships acessíveis e cada item contém somente `organizationId`, `organizationName`, `membershipId`, `role` e `farmScopeMode`. A função de bootstrap não recebe `userId`, não retorna fazendas e não cria `TenantContext`; `role` vem de `organization_memberships.role_key`, nunca do JWT. A próxima etapa será listar fazendas acessíveis e validar os modos `ALL_FARMS` e `SELECTED_FARMS`.
+
 A resposta separa identidade persistida (`userId`, `email`, `displayName`, `status`, timestamps e `version`) de `authentication` (`sessionId`, `authenticationLevel`, `issuedAt` e `expiresAt`). Ela não retorna token, claims completos, organizações, fazendas ou memberships.
 
 Sem bearer token válido, `/api/**` responde `401` em JSON. Um usuário autenticado que alcançar uma regra negada recebe `403`, também em JSON. As respostas incluem o request ID quando disponível e não revelam detalhes criptográficos.
@@ -121,7 +123,7 @@ Os scripts aceitam verificações locais opcionais sem reset implícito:
 ./scripts/check.sh --supabase-reset
 ```
 
-Após `mvn verify`, o smoke test opcional cria credenciais de Auth e um login PostgreSQL efêmeros, inicia uma API temporária, confirma persistência e idempotência e não imprime tokens, senhas ou chaves. O banco local é resetado ao final:
+Após `mvn verify`, o smoke test opcional cria credenciais de Auth e um login PostgreSQL efêmeros, inicia uma API temporária, confirma persistência, idempotência e isolamento de `GET /api/v1/me/organizations` e não imprime tokens, senhas ou chaves. O banco local é resetado ao final:
 
 ```powershell
 .\scripts\smoke-auth-local.ps1

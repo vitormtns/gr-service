@@ -66,7 +66,14 @@ public final class PostgresTestEnvironment {
 
     public static void clearUsers() throws SQLException {
         try (Connection connection = adminConnection(); Statement statement = connection.createStatement()) {
-            statement.execute("truncate table app.organization_memberships, app.users cascade");
+            statement.execute("""
+                    truncate table
+                        app.membership_farm_scopes,
+                        app.organization_memberships,
+                        app.farms,
+                        app.organizations,
+                        app.users
+                    """);
         }
     }
 

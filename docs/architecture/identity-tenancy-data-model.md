@@ -48,6 +48,14 @@ select set_config('app.current_tenant_id', '<tenant-uuid>', true);
 
 O valor local desaparece ao terminar a transação. A função `app.current_tenant_id()` fornece esse UUID às policies RLS de organizações, fazendas, memberships e escopos. RLS não substitui autorização nem o filtro explícito por tenant nos futuros repositories.
 
+## Bootstrap de organizações acessíveis
+
+Antes de selecionar um tenant, a API sincroniza o usuário autenticado e configura `app.current_user_id` somente na transação JDBC corrente com `set_config(..., true)`. `app.current_user_id()` retorna esse UUID ou `null` quando não há contexto.
+
+`app.list_current_user_organizations()` é a fronteira de leitura de bootstrap. A função não recebe UUID, possui `SECURITY DEFINER` com `search_path` vazio e só pode ser executada por `app_api`. Ela retorna `organizationId`, `organizationName`, `membershipId`, `role` e `farmScopeMode` quando usuário, membership e organização estão `ACTIVE`. Não retorna fazendas, permissões calculadas, plano ou tenant selecionado.
+
+Esse contexto de usuário não é `TenantContext` e não substitui a seleção posterior de tenant. Não há header, sessão HTTP ou claim JWT que escolha uma organização nesta fase.
+
 ## Supabase Auth
 
 A API valida o JWT pelo Spring Security Resource Server e converte o UUID de `sub` em uma identidade de requisição independente do framework. `SynchronizeAuthenticatedUser` persiste essa identidade em `app.users` por JDBC explícito; e-mail válido pode ser atualizado sem apagar valores por ausência, e `display_name` é preservado porque o token atual não possui fonte confiável para esse dado. Sessão e nível de autenticação continuam atributos não persistidos. Roles do token não concedem papéis organizacionais. A próxima etapa resolverá com segurança o tenant e a fazenda ativos; não existe cliente administrativo do Supabase.
