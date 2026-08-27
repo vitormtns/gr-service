@@ -2,6 +2,17 @@ spring:
   main:
     banner-mode: "off"
 
+app:
+  security:
+    supabase:
+      mode: HMAC
+      algorithm: HS256
+      issuer: https://auth.example.test/auth/v1
+      hmac-secret: test-only-hmac-key-with-at-least-32-bytes
+      audiences: authenticated
+      accepted-token-roles: authenticated
+      clock-skew: 1s
+
 management:
   endpoint:
     health:

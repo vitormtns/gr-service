@@ -29,6 +29,13 @@ Estas regras valem para todo o repositório. Antes de uma decisão arquitetural,
 23. Testes devem executar as migrations reais de `supabase/migrations`; não duplique SQL em recursos de teste.
 24. Nenhuma entidade ou migration de negócio deve referenciar diretamente `auth.users`.
 25. Clientes web e mobile acessam dados de negócio pela API Spring, nunca diretamente pelas tabelas do Supabase.
+26. Nunca interprete JWT manualmente em controller; a validação e conversão pertencem à infraestrutura do Spring Security.
+27. Use o UUID validado de `sub` como identidade canônica. E-mail é atributo opcional, nunca identidade primária.
+28. Roles do token Supabase são apenas técnicas e nunca viram papéis organizacionais, membership ou permissão de negócio.
+29. Nunca registre bearer token, assinatura, segredo HMAC, refresh token, headers de autorização ou claims completos.
+30. Nunca aceite tenant ou fazenda apenas por claim ou header não validado contra dados da aplicação.
+31. Segredo HMAC pertence somente ao backend. Prefira JWKS quando o emissor usar assinatura assimétrica e nunca faça fallback silencioso entre modos.
+32. Testes de autenticação devem usar material criptográfico efêmero ou exclusivo de teste e não depender do Supabase remoto.
 
 ## Convenções de implementação
 

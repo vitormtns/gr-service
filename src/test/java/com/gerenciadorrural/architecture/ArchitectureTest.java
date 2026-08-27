@@ -50,4 +50,19 @@ class ArchitectureTest {
                 .should().beFreeOfCycles()
                 .check(productionClasses);
     }
+
+    @Test
+    void authenticatedUserModelMustRemainFrameworkIndependent() {
+        noClasses().that().resideInAPackage("..security.model..")
+                .should().dependOnClassesThat().resideInAnyPackage("org.springframework..", "jakarta..")
+                .check(productionClasses);
+    }
+
+    @Test
+    void securityApiMustNotInterpretJwt() {
+        noClasses().that().resideInAPackage("..security.api..")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "org.springframework.security.oauth2.jwt..", "..security.infrastructure..")
+                .check(productionClasses);
+    }
 }

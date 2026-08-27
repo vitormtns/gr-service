@@ -15,4 +15,22 @@ management:
 
 logging:
   pattern:
-    level: "%5p [requestId:%X{requestId:-} correlationId:%X{correlationId:-} tenantId:%X{tenantId:-}]"
+    level: "%5p [requestId:%X{requestId:-} correlationId:%X{correlationId:-} userId:%X{userId:-} tenantId:%X{tenantId:-}]"
+
+---
+spring:
+  config:
+    activate:
+      on-profile: "!local & !test"
+
+app:
+  security:
+    supabase:
+      mode: ${SUPABASE_AUTH_MODE:JWKS}
+      algorithm: ${SUPABASE_AUTH_ALGORITHM:ES256}
+      issuer: ${SUPABASE_AUTH_ISSUER:}
+      jwks-uri: ${SUPABASE_AUTH_JWKS_URI:}
+      hmac-secret: ${SUPABASE_AUTH_JWT_SECRET:}
+      audiences: ${SUPABASE_AUTH_AUDIENCES:authenticated}
+      accepted-token-roles: ${SUPABASE_AUTH_TOKEN_ROLES:authenticated}
+      clock-skew: ${SUPABASE_AUTH_CLOCK_SKEW:30s}
