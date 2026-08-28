@@ -4,13 +4,13 @@ Backend do projeto provisoriamente chamado **Gerenciador Rural**. Este repositó
 
 ## Estado atual
 
-A aplicação Spring Boot valida access tokens do Supabase Auth e expõe os endpoints protegidos `GET /api/v1/me` e `GET /api/v1/me/organizations`. Ambos sincronizam o UUID validado de `sub` com `app.users` por JDBC explícito, de forma idempotente e concorrente. O segundo lista somente as organizações ativas acessíveis ao usuário, sem selecionar tenant. `GET /actuator/health` permanece público; os demais caminhos exigem autenticação ou ficam bloqueados.
+A aplicação Spring Boot valida access tokens do Supabase Auth e expõe endpoints protegidos para identidade, organizações, fazendas acessíveis e resolução opt-in do contexto. O UUID validado de `sub` é sincronizado com `app.users` por JDBC explícito, de forma idempotente e concorrente. `GET /actuator/health` permanece público; os demais caminhos exigem autenticação ou ficam bloqueados.
 
 ## Arquitetura resumida
 
 - Monólito modular orientado por domínio, com limites verificados por ArchUnit.
 - Separação lógica de escrita e leitura, sem command bus ou query bus.
-- Tenant definido pela futura `Organization`; uma organização poderá ter várias fazendas.
+- Tenant definido por `Organization`; uma organização pode ter várias fazendas.
 - API stateless, pronta para múltiplas instâncias e workers futuros.
 - PostgreSQL gerenciado por migrations do Supabase CLI, com JDBC explícito e sem alteração automática de schema.
 - Eventos de domínio versionados, com outbox e Event Sourcing apenas como decisões futuras e seletivas.
@@ -83,9 +83,9 @@ O modo `JWKS` é preferencial para emissores com chaves assimétricas e suporta 
 
 `GET /api/v1/me` executa `JWT -> AuthenticatedUser -> SynchronizeAuthenticatedUser -> app.users`. O UUID de `sub` é a chave interna; e-mail válido pode ser sincronizado, mas ausência ou valor inválido nunca apaga o valor persistido. Não existe claim confiável de nome no contrato atual, portanto `displayName` é preservado e não é atualizado pelo token. Chamadas sem mudança preservam `version` e `updatedAt`; updates reais usam locking otimista e retries limitados. Usuários `SUSPENDED` ou `DEACTIVATED` recebem `403` e nunca são reativados pelo JWT.
 
-`GET /api/v1/me/organizations` executa `JWT -> AuthenticatedUser -> SynchronizeAuthenticatedUser -> app.current_user_id transacional -> app.list_current_user_organizations()`. A resposta é `{ "items": [] }` quando não há memberships acessíveis e cada item contém somente `organizationId`, `organizationName`, `membershipId`, `role` e `farmScopeMode`. A função de bootstrap não recebe `userId`, não retorna fazendas e não cria `TenantContext`; `role` vem de `organization_memberships.role_key`, nunca do JWT. A próxima etapa será listar fazendas acessíveis e validar os modos `ALL_FARMS` e `SELECTED_FARMS`.
+`GET /api/v1/me/organizations` executa `JWT -> AuthenticatedUser -> SynchronizeAuthenticatedUser -> app.current_user_id transacional -> app.list_current_user_organizations()`. A resposta é `{ "items": [] }` quando não há memberships acessíveis e cada item contém somente `organizationId`, `organizationName`, `membershipId`, `role` e `farmScopeMode`. A função de bootstrap não recebe `userId`, não retorna fazendas e não cria `TenantContext`; `role` vem de `organization_memberships.role_key`, nunca do JWT. A listagem de fazendas e a resolução do contexto ocorrem em endpoints separados, sempre com validação no banco.
 
-`GET /api/v1/me/organizations/{organizationId}/farms` valida o acesso à organização usando o usuário autenticado, sem confiar no UUID informado pela URL. Para `ALL_FARMS`, retorna todas as fazendas `ACTIVE` da organização; para `SELECTED_FARMS`, somente as fazendas `ACTIVE` vinculadas ao mesmo membership. Organizações inacessíveis e estados bloqueados resultam em `{ "items": [] }`, sem revelar a existência do recurso. A fase ainda não seleciona tenant ou fazenda.
+`GET /api/v1/me/organizations/{organizationId}/farms` valida o acesso à organização usando o usuário autenticado, sem confiar no UUID informado pela URL. Para `ALL_FARMS`, retorna todas as fazendas `ACTIVE` da organização; para `SELECTED_FARMS`, somente as fazendas `ACTIVE` vinculadas ao mesmo membership. Organizações inacessíveis e estados bloqueados resultam em `{ "items": [] }`, sem revelar a existência do recurso. Esse endpoint lista opções; a resolução validada do contexto ocorre em `/api/v1/context`.
 
 `GET /api/v1/context` é opt-in e exige os headers `X-Organization-Id` e `X-Farm-Id`. Os valores são apenas uma solicitação: a API valida usuário, organização, membership, fazenda e escopo antes de devolver o contexto. O `TenantContext` é imutável, armazenado somente como atributo da requisição e removido naturalmente ao término dela; não há sessão, cookie, `ThreadLocal`, cache global ou configuração de `app.current_tenant_id`. Headers inválidos retornam `400`, combinação inacessível retorna `404` e toda resposta válida usa `Cache-Control: no-store`.
 
@@ -155,6 +155,12 @@ Detalhes estão em [supabase/README.md](supabase/README.md). Toda alteração es
 A organização é o tenant; fazendas e memberships pertencem obrigatoriamente a uma organização. Usuários são identidades globais e podem participar de vários tenants. O UUID de `app.users` corresponde ao claim validado `sub` do Supabase Auth, sem FK para `auth.users` e sem armazenar senhas ou tokens. A PK protege a primeira sincronização concorrente e a coluna `version` protege atualizações concorrentes.
 
 As tabelas de negócio ficam no schema privado `app`, fora dos schemas expostos pelo PostgREST. Clientes acessam o domínio exclusivamente pela API Spring. A role `app_api` e as policies RLS usam um tenant configurado localmente por transação como defesa adicional, sem substituir os futuros filtros tenant-aware dos repositories.
+
+## Contexto transacional de tenant
+
+A resolução HTTP autoriza e produz um `TenantContext` imutável, mas não configura o tenant no banco. Casos de uso tenant-aware devem encaminhar essa mesma instância a `TenantTransactionExecutor.execute(context, () -> repository.operacao())`. O executor apenas propaga um contexto já autorizado: construir `TenantContext` manualmente não é caminho de autorização. Na mesma conexão e transação PostgreSQL, ele executa `SET LOCAL ROLE app_api`, configura `app.current_user_id` e `app.current_tenant_id` com `set_config(..., true)`, confirma o estado no banco e só então chama o repository. Commit e rollback removem automaticamente role e settings locais.
+
+Execuções aninhadas com o mesmo usuário e tenant são idempotentes; outro usuário ou tenant falha antes do callback interno e marca a transação `REQUIRED` como `rollback-only`, mesmo quando o conflito é capturado. O executor não usa AOP, anotação transacional mágica, `ThreadLocal`, conexão auxiliar ou setting global de fazenda: `farmId` permanece apenas no `TenantContext`. Repositories futuros devem manter filtros explícitos por tenant e executar dentro do executor; RLS é uma segunda linha de defesa.
 
 Leia o [modelo de identidade e tenancy](docs/architecture/identity-tenancy-data-model.md) para conhecer tabelas, relações, índices e camadas de segurança.
 
