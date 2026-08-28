@@ -65,4 +65,33 @@ class ArchitectureTest {
                         "org.springframework.security.oauth2.jwt..", "..security.infrastructure..")
                 .check(productionClasses);
     }
+
+    @Test
+    void tenantTransactionContractsAndInfrastructureMustRemainExplicitAndRequestIndependent() {
+        noClasses().that().resideInAPackage("..shared.tenancy..")
+                .and().haveSimpleNameStartingWith("TenantTransaction")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "org.springframework..",
+                        "org.aspectj..",
+                        "java.sql..",
+                        "javax.sql..",
+                        "jakarta.servlet..",
+                        "javax.servlet.."
+                )
+                .check(productionClasses);
+        noClasses().that().haveFullyQualifiedName(
+                        "com.gerenciadorrural.shared.infrastructure.database.SpringTenantTransactionExecutor"
+                )
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "org.aspectj..",
+                        "org.springframework.aop..",
+                        "jakarta.servlet..",
+                        "javax.servlet.."
+                )
+                .check(productionClasses);
+        noClasses().should().dependOnClassesThat().haveFullyQualifiedName(ThreadLocal.class.getName())
+                .check(productionClasses);
+        noClasses().should().dependOnClassesThat().haveFullyQualifiedName(InheritableThreadLocal.class.getName())
+                .check(productionClasses);
+    }
 }

@@ -41,7 +41,10 @@ Estas regras valem para todo o repositório. Antes de uma decisão arquitetural,
 35. A sincronização de identidade usa `sub` como PK, preserva valores ausentes e não reativa usuários suspensos ou desativados.
 42. IDs enviados pelo cliente nunca comprovam acesso; `TenantContext` é imutável e existe somente como atributo da requisição.
 43. Contexto de tenant não pode usar `ThreadLocal`; apenas endpoints opt-in podem resolvê-lo e role/escopo vêm do banco.
-44. Esta fase não configura `app.current_tenant_id`.
+44. Toda operação tenant-aware deve usar `TenantTransactionExecutor`; nunca configure `app.current_tenant_id` fora da transação da operação.
+45. Nunca confie em header como autorização, troque tenant durante uma transação, use `ThreadLocal` ou abra conexão separada para configurar o contexto.
+46. Repositories tenant-aware só executam depois da configuração transacional; RLS é defesa obrigatória e não substitui as regras da aplicação.
+47. `TenantTransactionExecutor` apenas propaga um `TenantContext` previamente autorizado; nunca construa contexto manualmente como atalho de autorização.
 
 ## Convenções de implementação
 

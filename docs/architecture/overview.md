@@ -48,4 +48,4 @@ A aplicação permanece stateless. Request ID e correlation ID entram no context
 
 ## Limites atuais
 
-Existem o modelo SQL de identidade/tenancy, a fronteira de autenticação HTTP stateless e o primeiro repository JDBC. `GET /api/v1/me` sincroniza e retorna a identidade persistida separada dos dados de autenticação. Ainda não existem JPA, resolução de tenant ou fazenda, outbox, jobs, idempotência persistida de comandos ou Event Sourcing.
+Existem o modelo SQL de identidade/tenancy, a fronteira de autenticação HTTP stateless, repositories JDBC de identidade, resolução validada de organização e fazenda e propagação explícita do contexto tenant na transação PostgreSQL. Ainda não existem JPA, domínio rural, outbox, jobs, idempotência persistida de comandos ou Event Sourcing.
