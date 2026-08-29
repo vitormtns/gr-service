@@ -78,6 +78,29 @@ function Protect-DiagnosticFile {
     Set-Content -LiteralPath $Path -Value $content -NoNewline
 }
 
+function Get-JavaExecutable {
+    $javaCommand = (Get-Command "java.exe" -ErrorAction Stop).Source
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $javaSettings = (& $javaCommand -XshowSettings:properties -version 2>&1) | Out-String
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $javaHomeMatch = [regex]::Match(
+            $javaSettings,
+            "(?m)^\s*java\.home\s*=\s*(.+?)\s*$")
+    if (-not $javaHomeMatch.Success) {
+        throw "Não foi possível identificar o executável real do Java."
+    }
+
+    $javaExecutable = Join-Path $javaHomeMatch.Groups[1].Value "bin\java.exe"
+    if (-not (Test-Path -LiteralPath $javaExecutable -PathType Leaf)) {
+        throw "O executável real do Java não foi encontrado."
+    }
+    return $javaExecutable
+}
+
 $stdoutLog = New-TemporaryFile
 $stderrLog = New-TemporaryFile
 $apiProcess = $null
@@ -163,7 +186,8 @@ grant app_api to $runtimeUsername;
     }
     $jar = $jarFiles[0].FullName
     $jarArgument = '"' + $jar + '"'
-    $apiProcess = Start-Process -FilePath "java.exe" `
+    $javaExecutable = Get-JavaExecutable
+    $apiProcess = Start-Process -FilePath $javaExecutable `
         -ArgumentList @("-jar", $jarArgument, "--spring.profiles.active=local", "--server.port=$port") `
         -WindowStyle Hidden `
         -RedirectStandardOutput $stdoutLog.FullName `
@@ -231,6 +255,7 @@ grant app_api to $runtimeUsername;
     $otherUserId = [guid]::NewGuid().ToString()
     $otherOrganizationId = [guid]::NewGuid().ToString()
     $otherMembershipId = [guid]::NewGuid().ToString()
+    $otherFarmId = [guid]::NewGuid().ToString()
     $activeFarmId = [guid]::NewGuid().ToString()
     $secondActiveFarmId = [guid]::NewGuid().ToString()
     $inactiveFarmId = [guid]::NewGuid().ToString()
@@ -259,6 +284,8 @@ insert into app.organization_memberships
     (id, tenant_id, user_id, role_key, status, farm_scope_mode)
 values
     ('$otherMembershipId'::uuid, '$otherOrganizationId'::uuid, '$otherUserId'::uuid, 'VIEWER', 'ACTIVE', 'SELECTED_FARMS');
+insert into app.farms (id, tenant_id, name, status)
+values ('$otherFarmId'::uuid, '$otherOrganizationId'::uuid, 'Fazenda de outro usuário', 'ACTIVE');
 insert into app.organizations (id, name, status) values
     ('$suspendedMembershipOrganizationId'::uuid, 'Membership suspenso', 'ACTIVE'),
     ('$revokedMembershipOrganizationId'::uuid, 'Membership revogado', 'ACTIVE'),
@@ -292,6 +319,12 @@ insert into app.farms (id, tenant_id, name, status) values
         throw "GET /api/v1/context falhou: status=$($failure.Status); requestId=$($failure.RequestId); code=$($failure.Code). Logs da API foram preservados para diagnóstico."
     }
     $allFarmsContextBody = $allFarmsContext.Content | ConvertFrom-Json
+    $farmProfileUri = "http://127.0.0.1:$port/api/v1/farms/current"
+    $farmProfile = Invoke-WebRequest -Uri $farmProfileUri -Method Get -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $activeFarmId } -UseBasicParsing
+    $farmProfileBody = $farmProfile.Content | ConvertFrom-Json
+    $otherFarmProfileStatus = Get-HttpStatus -Uri $farmProfileUri -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $otherOrganizationId; "X-Farm-Id" = $otherFarmId }
+    $crossTenantFarmProfileStatus = Get-HttpStatus -Uri $farmProfileUri -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $otherFarmId }
+    $inactiveFarmProfileStatus = Get-HttpStatus -Uri $farmProfileUri -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $inactiveFarmId }
     @"
 update app.organization_memberships set farm_scope_mode = 'SELECTED_FARMS' where id = '$membershipId'::uuid;
 insert into app.membership_farm_scopes (tenant_id, membership_id, farm_id)
@@ -359,6 +392,10 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
         TenantContextAllFarms = $allFarmsContext.StatusCode -eq 200 -and $allFarmsContext.Headers["Cache-Control"] -match "no-store" -and $allFarmsContextBody.userId -eq $signup.user.id -and $allFarmsContextBody.organization.id -eq $organizationId -and $allFarmsContextBody.farm.id -eq $activeFarmId -and $allFarmsContextBody.membership.id -eq $membershipId -and $allFarmsContextBody.membership.farmScopeMode -eq "ALL_FARMS"
         TenantContextSelectedFarms = $selectedContext.farm.id -eq $secondActiveFarmId -and $selectedContext.membership.farmScopeMode -eq "SELECTED_FARMS"
         TenantContextUnselectedFarmRejected = $unselectedContextStatus -eq 404
+        FarmProfileCurrent = $farmProfile.StatusCode -eq 200 -and $farmProfile.Headers["Cache-Control"] -match "no-store" -and $farmProfileBody.id -eq $activeFarmId -and $farmProfileBody.organizationId -eq $organizationId -and $farmProfileBody.name -eq "Fazenda ativa A" -and $farmProfileBody.status -eq "ACTIVE" -and @($farmProfileBody.PSObject.Properties.Name).Count -eq 4 -and -not ($farmProfile.Content -match "membership|farmScopeMode|role")
+        FarmProfileOtherOrganizationRejected = $otherFarmProfileStatus -eq 404
+        FarmProfileCrossTenantRejected = $crossTenantFarmProfileStatus -eq 404
+        FarmProfileInactiveRejected = $inactiveFarmProfileStatus -eq 404
         SuspendedMembershipFarmsIsolated = @($suspendedMembershipFarms.items).Count -eq 0
         RevokedMembershipFarmsIsolated = @($revokedMembershipFarms.items).Count -eq 0
         SuspendedOrganizationFarmsIsolated = @($suspendedOrganizationFarms.items).Count -eq 0
@@ -376,6 +413,7 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
         $smokeResult.SecondCallIdempotent, $smokeResult.AccessibleOrganizationReturned,
         $smokeResult.OtherUserOrganizationIsolated, $smokeResult.AllFarmsReturned,
         $smokeResult.TenantContextAllFarms, $smokeResult.TenantContextSelectedFarms, $smokeResult.TenantContextUnselectedFarmRejected,
+        $smokeResult.FarmProfileCurrent, $smokeResult.FarmProfileOtherOrganizationRejected, $smokeResult.FarmProfileCrossTenantRejected, $smokeResult.FarmProfileInactiveRejected,
         $smokeResult.SelectedFarmsReturned, $smokeResult.OtherOrganizationFarmsIsolated,
         $smokeResult.SuspendedMembershipFarmsIsolated, $smokeResult.RevokedMembershipFarmsIsolated,
         $smokeResult.SuspendedOrganizationFarmsIsolated, $smokeResult.ArchivedOrganizationFarmsIsolated,
@@ -397,6 +435,12 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
         if ($apiProcess -and -not $apiProcess.HasExited) {
             Stop-Process -Id $apiProcess.Id -Force
             Wait-Process -Id $apiProcess.Id -Timeout 10 -ErrorAction SilentlyContinue
+        }
+        if ($apiProcess) {
+            $apiProcess.Refresh()
+            if (-not $apiProcess.HasExited) {
+                throw "A API permaneceu em execução após a tentativa de encerramento."
+            }
         }
     } catch {
         $cleanupFailures.Add("Não foi possível encerrar a API iniciada pelo smoke.")
