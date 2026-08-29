@@ -164,9 +164,32 @@ Execuções aninhadas com o mesmo usuário e tenant são idempotentes; outro usu
 
 ## Perfil da fazenda atual
 
-`GET /api/v1/farms/current` exige `Authorization: Bearer <token>`, `X-Organization-Id` e `X-Farm-Id`. A resposta contém somente `id`, `organizationId`, `name` e `status`. Os headers solicitam o contexto, mas não autorizam acesso: a fazenda retornada é exclusivamente a fazenda do `TenantContext` autorizado; não há escolha alternativa por path, query ou body.
+`GET /api/v1/farms/current` exige `Authorization: Bearer <token>`, `X-Organization-Id` e `X-Farm-Id`. Os headers solicitam o contexto, mas não autorizam acesso: a fazenda retornada é exclusivamente a fazenda do `TenantContext` autorizado.
 
-O fluxo é `JWT → TenantContext autorizado → TenantTransactionExecutor → app.current_user_id → app.current_tenant_id → repository JDBC → RLS → HTTP`. O repository filtra explicitamente tenant e fazenda, enquanto RLS é defesa em profundidade. A resposta usa `Cache-Control: no-store`; ausência, inatividade ou inacessibilidade retornam 404 genérico e falhas de infraestrutura retornam 503 sanitizado. Não são expostos membership, role, farmScopeMode, token, e-mail ou claims.
+```json
+{
+  "id": "uuid",
+  "organizationId": "uuid",
+  "name": "Fazenda Santa Clara",
+  "status": "ACTIVE",
+  "version": 3
+}
+```
+
+`PATCH /api/v1/farms/current` usa os mesmos headers e `Content-Type: application/json` para atualizar somente o nome.
+
+```json
+{
+  "name": "Novo nome",
+  "expectedVersion": 3
+}
+```
+
+Em sucesso, retorna os mesmos cinco campos, com `name` atualizado e `version` igual a 4. `tenantId` e `farmId` vêm exclusivamente do `TenantContext` autorizado; o body aceita somente `name` e `expectedVersion`, e qualquer campo adicional é rejeitado. O PATCH também rejeita qualquer query string. Espaços externos do nome são removidos; acentos, caixa e espaços internos são preservados. `expectedVersion` implementa optimistic locking: a versão incrementa exatamente uma vez, e um conflito nunca sobrescreve silenciosamente o recurso. `updated_at` é definido pelo PostgreSQL e não é exposto pela API.
+
+Todas as respostas usam `Cache-Control: no-store`. Entrada inválida retorna `400 FARM_PROFILE_UPDATE_INVALID`; fazenda indisponível ou inacessível retorna `404 FARM_PROFILE_NOT_AVAILABLE`; conflito de versão retorna `409 FARM_PROFILE_VERSION_CONFLICT`; e falha técnica retorna `503 FARM_PROFILE_PERSISTENCE_UNAVAILABLE`. O 404 não enumera recurso ou estado, o 409 não expõe a versão atual e RLS permanece como defesa em profundidade dos filtros explícitos do repository.
+
+O fluxo é `JWT → TenantContext autorizado → TenantTransactionExecutor → app.current_user_id → app.current_tenant_id → repository JDBC → RLS → HTTP`. O repository filtra explicitamente tenant e fazenda. Não são expostos membership, role, farmScopeMode, token, e-mail ou claims.
 
 Leia o [modelo de identidade e tenancy](docs/architecture/identity-tenancy-data-model.md) para conhecer tabelas, relações, índices e camadas de segurança.
 
