@@ -162,6 +162,12 @@ A resolução HTTP autoriza e produz um `TenantContext` imutável, mas não conf
 
 Execuções aninhadas com o mesmo usuário e tenant são idempotentes; outro usuário ou tenant falha antes do callback interno e marca a transação `REQUIRED` como `rollback-only`, mesmo quando o conflito é capturado. O executor não usa AOP, anotação transacional mágica, `ThreadLocal`, conexão auxiliar ou setting global de fazenda: `farmId` permanece apenas no `TenantContext`. Repositories futuros devem manter filtros explícitos por tenant e executar dentro do executor; RLS é uma segunda linha de defesa.
 
+## Perfil da fazenda atual
+
+`GET /api/v1/farms/current` exige `Authorization: Bearer <token>`, `X-Organization-Id` e `X-Farm-Id`. A resposta contém somente `id`, `organizationId`, `name` e `status`. Os headers solicitam o contexto, mas não autorizam acesso: a fazenda retornada é exclusivamente a fazenda do `TenantContext` autorizado; não há escolha alternativa por path, query ou body.
+
+O fluxo é `JWT → TenantContext autorizado → TenantTransactionExecutor → app.current_user_id → app.current_tenant_id → repository JDBC → RLS → HTTP`. O repository filtra explicitamente tenant e fazenda, enquanto RLS é defesa em profundidade. A resposta usa `Cache-Control: no-store`; ausência, inatividade ou inacessibilidade retornam 404 genérico e falhas de infraestrutura retornam 503 sanitizado. Não são expostos membership, role, farmScopeMode, token, e-mail ou claims.
+
 Leia o [modelo de identidade e tenancy](docs/architecture/identity-tenancy-data-model.md) para conhecer tabelas, relações, índices e camadas de segurança.
 
 ## Estrutura

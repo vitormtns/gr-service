@@ -6,8 +6,11 @@ import com.gerenciadorrural.modules.identity.domain.InternalUserRepository;
 import com.gerenciadorrural.modules.organizations.domain.AccessibleOrganizationRepository;
 import com.gerenciadorrural.modules.organizations.application.ResolveTenantContext;
 import com.gerenciadorrural.modules.organizations.application.TenantContextNotAvailableException;
+import com.gerenciadorrural.modules.organizations.domain.TenantContextResolverRepository;
+import com.gerenciadorrural.modules.farms.infrastructure.JdbcFarmProfileQueryRepository;
 import com.gerenciadorrural.shared.tenancy.TenantContext;
 import com.gerenciadorrural.shared.tenancy.TenantId;
+import com.gerenciadorrural.shared.tenancy.TenantContextRequestAttribute;
 import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
@@ -23,6 +26,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -32,6 +36,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -43,6 +48,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
 
@@ -75,6 +81,12 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
     @MockitoSpyBean
     private ResolveTenantContext resolveTenantContext;
 
+    @MockitoSpyBean
+    private JdbcFarmProfileQueryRepository farmProfileQueryRepository;
+
+    @MockitoSpyBean
+    private TenantContextResolverRepository tenantContextResolverRepository;
+
     @BeforeEach
     void clearDatabase() throws SQLException {
         PostgresTestEnvironment.clearUsers();
@@ -82,7 +94,7 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
 
     @AfterEach
     void resetRepositorySpy() {
-        reset(internalUserRepository, accessibleOrganizationRepository, resolveTenantContext);
+        reset(internalUserRepository, accessibleOrganizationRepository, resolveTenantContext, farmProfileQueryRepository, tenantContextResolverRepository);
     }
 
     @Test
@@ -163,6 +175,96 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
         mockMvc.perform(get("/api/v1/context").header(HttpHeaders.AUTHORIZATION,"Bearer "+sign(validClaims(UUID.randomUUID()),SECRET)).header("X-Organization-Id",organizationId).header("X-Farm-Id",farmId))
                 .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("TENANT_CONTEXT_NOT_AVAILABLE"))
                 .andExpect(jsonPath("$.message", not(containsString(organizationId.toString()))));
+    }
+
+    @Test
+    void nonOptInEndpointsIgnoreTenantHeadersWithoutResolvingOrStoringTenantContext() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID requestedOrganization = UUID.randomUUID();
+        UUID requestedFarm = UUID.randomUUID();
+        String token = sign(validClaims(userId), SECRET);
+        var result = mockMvc.perform(get("/api/v1/me")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .header("X-Organization-Id", requestedOrganization)
+                        .header("X-Farm-Id", requestedFarm))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(userId.toString()))
+                .andReturn();
+        var organizations = mockMvc.perform(get("/api/v1/me/organizations")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .header("X-Organization-Id", requestedOrganization)
+                        .header("X-Farm-Id", requestedFarm))
+                .andExpect(status().isOk())
+                .andReturn();
+        var farms = mockMvc.perform(get("/api/v1/me/organizations/{organizationId}/farms", requestedOrganization)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .header("X-Organization-Id", requestedOrganization)
+                        .header("X-Farm-Id", requestedFarm))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        verifyNoInteractions(resolveTenantContext, tenantContextResolverRepository);
+        org.assertj.core.api.Assertions.assertThat(
+                result.getRequest().getAttribute(TenantContextRequestAttribute.NAME)).isNull();
+        org.assertj.core.api.Assertions.assertThat(
+                organizations.getRequest().getAttribute(TenantContextRequestAttribute.NAME)).isNull();
+        org.assertj.core.api.Assertions.assertThat(
+                farms.getRequest().getAttribute(TenantContextRequestAttribute.NAME)).isNull();
+    }
+
+    @Test
+    void farmProfileJdbcFailureReturnsSanitized503InsteadOfFunctional404() throws Exception {
+        UUID userId=UUID.randomUUID(), organizationId=UUID.randomUUID(), farmId=UUID.randomUUID(), membershipId=UUID.randomUUID();
+        TenantContext context=new TenantContext(new TenantId(organizationId),userId,farmId,membershipId,"OWNER","ALL_FARMS");
+        doReturn(new ResolveTenantContext.Resolved(context,"Organização","Fazenda")).when(resolveTenantContext).execute(organizationId,farmId);
+        doThrow(new CannotGetJdbcConnectionException("jdbc:postgresql://database-host.example.test:5432/schema password=secret"))
+                .when(farmProfileQueryRepository).findCurrent(any(),any());
+        mockMvc.perform(get("/api/v1/farms/current").header("X-Request-ID","farm-jdbc-failure")
+                        .header(HttpHeaders.AUTHORIZATION,"Bearer "+sign(validClaims(userId),SECRET))
+                        .header("X-Organization-Id",organizationId).header("X-Farm-Id",farmId))
+                .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("FARM_PROFILE_PERSISTENCE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.requestId").value("farm-jdbc-failure"))
+                .andExpect(jsonPath("$.code").value(not("FARM_PROFILE_NOT_AVAILABLE")))
+                .andExpect(content().string(not(containsString("postgresql")))).andExpect(content().string(not(containsString("database-host"))))
+                .andExpect(content().string(not(containsString("password"))));
+    }
+
+    @Test
+    void missingFarmAfterAValidContextReturnsGenericFunctional404() throws Exception {
+        UUID userId=UUID.randomUUID(), organizationId=UUID.randomUUID(), farmId=UUID.randomUUID(), membershipId=UUID.randomUUID();
+        TenantContext context=new TenantContext(new TenantId(organizationId),userId,farmId,membershipId,"OWNER","ALL_FARMS");
+        doReturn(new ResolveTenantContext.Resolved(context,"Organização confidencial","Fazenda confidencial"))
+                .when(resolveTenantContext).execute(organizationId,farmId);
+        doReturn(Optional.empty()).when(farmProfileQueryRepository).findCurrent(any(),any());
+
+        mockMvc.perform(get("/api/v1/farms/current").header("X-Request-ID","farm-not-available")
+                        .header(HttpHeaders.AUTHORIZATION,"Bearer "+sign(validClaims(userId),SECRET))
+                        .header("X-Organization-Id",organizationId).header("X-Farm-Id",farmId))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("FARM_PROFILE_NOT_AVAILABLE"))
+                .andExpect(jsonPath("$.requestId").value("farm-not-available"))
+                .andExpect(content().string(not(containsString(organizationId.toString()))))
+                .andExpect(content().string(not(containsString(farmId.toString()))))
+                .andExpect(content().string(not(containsString("confidencial"))));
+    }
+
+    @Test
+    void farmProfileTransactionFailureReturnsSanitized503() throws Exception {
+        UUID userId=UUID.randomUUID(), organizationId=UUID.randomUUID(), farmId=UUID.randomUUID();
+        doThrow(new CannotCreateTransactionException(
+                "jdbc:postgresql://transaction-host.example.test:5432/app user=secret password=secret"
+        )).when(resolveTenantContext).execute(organizationId,farmId);
+
+        mockMvc.perform(get("/api/v1/farms/current").header("X-Request-ID","farm-transaction-failure")
+                        .header(HttpHeaders.AUTHORIZATION,"Bearer "+sign(validClaims(userId),SECRET))
+                        .header("X-Organization-Id",organizationId).header("X-Farm-Id",farmId))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("FARM_PROFILE_PERSISTENCE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.requestId").value("farm-transaction-failure"))
+                .andExpect(content().string(not(containsString("postgresql"))))
+                .andExpect(content().string(not(containsString("transaction-host"))))
+                .andExpect(content().string(not(containsString("password"))))
+                .andExpect(content().string(not(containsString("secret"))));
     }
 
     @Test

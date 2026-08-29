@@ -45,6 +45,9 @@ Estas regras valem para todo o repositório. Antes de uma decisão arquitetural,
 45. Nunca confie em header como autorização, troque tenant durante uma transação, use `ThreadLocal` ou abra conexão separada para configurar o contexto.
 46. Repositories tenant-aware só executam depois da configuração transacional; RLS é defesa obrigatória e não substitui as regras da aplicação.
 47. `TenantTransactionExecutor` apenas propaga um `TenantContext` previamente autorizado; nunca construa contexto manualmente como atalho de autorização.
+48. Endpoints “current” usam exclusivamente IDs do TenantContext autorizado; controllers não aceitam farmId alternativo.
+49. Repositories tenant-aware filtram tenantId e o identificador do recurso, mas não executam `SET ROLE` ou `set_config`.
+50. Resolução de contexto é opt-in: nunca use filtro global, sessão ou ThreadLocal para tenancy. Respostas de leitura não expõem membership, role, escopo ou claims; ausência e acesso negado permanecem não enumeráveis.
 
 ## Convenções de implementação
 

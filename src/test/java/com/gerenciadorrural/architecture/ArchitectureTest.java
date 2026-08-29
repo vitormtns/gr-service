@@ -94,4 +94,28 @@ class ArchitectureTest {
         noClasses().should().dependOnClassesThat().haveFullyQualifiedName(InheritableThreadLocal.class.getName())
                 .check(productionClasses);
     }
+
+    @Test
+    void farmProfileVerticalSliceMustKeepItsTechnicalBoundaries() {
+        noClasses().that().resideInAPackage("..modules.farms.api..")
+                .should().dependOnClassesThat().resideInAPackage("..modules.farms.infrastructure..")
+                .check(productionClasses);
+        noClasses().that().resideInAPackage("..modules.farms.application..")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "org.springframework.jdbc..",
+                        "org.springframework.web..",
+                        "jakarta.servlet..",
+                        "java.sql..",
+                        "javax.sql.."
+                )
+                .check(productionClasses);
+        noClasses().that().haveSimpleName("FarmProfileQueryRepository")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "org.springframework..",
+                        "jakarta.servlet..",
+                        "java.sql..",
+                        "javax.sql.."
+                )
+                .check(productionClasses);
+    }
 }
