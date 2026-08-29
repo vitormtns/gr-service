@@ -8,6 +8,8 @@ import com.gerenciadorrural.modules.organizations.application.ResolveTenantConte
 import com.gerenciadorrural.modules.organizations.application.TenantContextNotAvailableException;
 import com.gerenciadorrural.modules.organizations.domain.TenantContextResolverRepository;
 import com.gerenciadorrural.modules.farms.infrastructure.JdbcFarmProfileQueryRepository;
+import com.gerenciadorrural.modules.farms.application.UpdateCurrentFarmProfile;
+import com.gerenciadorrural.shared.tenancy.TenantTransactionInfrastructureException;
 import com.gerenciadorrural.shared.tenancy.TenantContext;
 import com.gerenciadorrural.shared.tenancy.TenantId;
 import com.gerenciadorrural.shared.tenancy.TenantContextRequestAttribute;
@@ -26,6 +28,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
+import org.springframework.dao.DataRetrievalFailureException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -40,6 +43,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -85,6 +89,9 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
     private JdbcFarmProfileQueryRepository farmProfileQueryRepository;
 
     @MockitoSpyBean
+    private UpdateCurrentFarmProfile updateCurrentFarmProfile;
+
+    @MockitoSpyBean
     private TenantContextResolverRepository tenantContextResolverRepository;
 
     @BeforeEach
@@ -94,7 +101,7 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
 
     @AfterEach
     void resetRepositorySpy() {
-        reset(internalUserRepository, accessibleOrganizationRepository, resolveTenantContext, farmProfileQueryRepository, tenantContextResolverRepository);
+        reset(internalUserRepository, accessibleOrganizationRepository, resolveTenantContext, farmProfileQueryRepository, updateCurrentFarmProfile, tenantContextResolverRepository);
     }
 
     @Test
@@ -265,6 +272,91 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
                 .andExpect(content().string(not(containsString("transaction-host"))))
                 .andExpect(content().string(not(containsString("password"))))
                 .andExpect(content().string(not(containsString("secret"))));
+    }
+
+    @Test
+    void farmProfilePatchTechnicalFailuresRemainSanitized503() throws Exception {
+        UUID userId = UUID.randomUUID(), organizationId = UUID.randomUUID(), farmId = UUID.randomUUID(), membershipId = UUID.randomUUID();
+        TenantContext context = new TenantContext(new TenantId(organizationId), userId, farmId, membershipId, "OWNER", "ALL_FARMS");
+        doReturn(new ResolveTenantContext.Resolved(context, "Organização", "Fazenda")).when(resolveTenantContext).execute(organizationId, farmId);
+
+        for (RuntimeException failure : List.of(
+                new CannotGetJdbcConnectionException("jdbc:postgresql://host-interno/app senha=segredo"),
+                new TenantTransactionInfrastructureException(),
+                new CannotCreateTransactionException("jdbc:postgresql://host-interno/app usuário=segredo")
+        )) {
+            doThrow(failure).when(updateCurrentFarmProfile).execute(any(), any(), org.mockito.ArgumentMatchers.anyLong());
+            mockMvc.perform(patch("/api/v1/farms/current").header("X-Request-ID", "patch-persistence-failure")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + sign(validClaims(userId), SECRET))
+                            .header("X-Organization-Id", organizationId).header("X-Farm-Id", farmId)
+                            .contentType("application/json").content("{\"name\":\"Nome\",\"expectedVersion\":0}"))
+                    .andExpect(status().isServiceUnavailable())
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                    .andExpect(jsonPath("$.code").value("FARM_PROFILE_PERSISTENCE_UNAVAILABLE"))
+                    .andExpect(jsonPath("$.requestId").value("patch-persistence-failure"))
+                    .andExpect(content().string(not(containsString("host-interno"))))
+                    .andExpect(content().string(not(containsString("segredo"))));
+            reset(updateCurrentFarmProfile);
+        }
+    }
+
+    @Test
+    void farmProfilePatchDiagnosticFailureReturnsSanitized503() throws Exception {
+        UUID userId = UUID.randomUUID();
+        TenantContextData data = insertTenantContextData(userId, "Organização", "Fazenda", "ALL_FARMS");
+        doThrow(new DataRetrievalFailureException(
+                "select version from app.farms at jdbc:postgresql://diagnostic-host/app password=secret"
+        )).when(farmProfileQueryRepository).findCurrent(any(), any());
+
+        mockMvc.perform(patch("/api/v1/farms/current")
+                        .header("X-Request-ID", "patch-diagnostic-failure")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + sign(validClaims(userId), SECRET))
+                        .header("X-Organization-Id", data.organizationId())
+                        .header("X-Farm-Id", data.farmId())
+                        .contentType("application/json")
+                        .content("{\"name\":\"Nome\",\"expectedVersion\":99}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                .andExpect(jsonPath("$.code").value("FARM_PROFILE_PERSISTENCE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.requestId").value("patch-diagnostic-failure"))
+                .andExpect(content().string(not(containsString("app.farms"))))
+                .andExpect(content().string(not(containsString("diagnostic-host"))))
+                .andExpect(content().string(not(containsString("password"))))
+                .andExpect(content().string(not(containsString("secret"))));
+    }
+
+    @Test
+    void rejectedPatchPayloadAndQueryNeverReachTheUseCase() throws Exception {
+        UUID userId = UUID.randomUUID(), organizationId = UUID.randomUUID(), farmId = UUID.randomUUID();
+        TenantContext context = new TenantContext(
+                new TenantId(organizationId), userId, farmId, UUID.randomUUID(), "OWNER", "ALL_FARMS"
+        );
+        doReturn(new ResolveTenantContext.Resolved(context, "Organização", "Fazenda"))
+                .when(resolveTenantContext).execute(organizationId, farmId);
+        String token = sign(validClaims(userId), SECRET);
+
+        mockMvc.perform(patch("/api/v1/farms/current")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .header("X-Organization-Id", organizationId)
+                        .header("X-Farm-Id", farmId)
+                        .contentType("application/json")
+                        .content("{\"name\":\"Nome\",\"expectedVersion\":0}")
+                        .with(request -> {
+                            request.setQueryString("&&");
+                            return request;
+                        }))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("FARM_PROFILE_UPDATE_INVALID"));
+        mockMvc.perform(patch("/api/v1/farms/current")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .header("X-Organization-Id", organizationId)
+                        .header("X-Farm-Id", farmId)
+                        .contentType("application/json")
+                        .content("{\"name\":\"Primeiro\",\"name\":\"Segundo\",\"expectedVersion\":0}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("FARM_PROFILE_UPDATE_INVALID"));
+
+        verifyNoInteractions(updateCurrentFarmProfile);
     }
 
     @Test

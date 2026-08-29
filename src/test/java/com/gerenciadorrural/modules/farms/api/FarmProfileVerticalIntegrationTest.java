@@ -8,6 +8,7 @@ import com.nimbusds.jose.JWSHeader;
 import com.nimbusds.jose.crypto.MACSigner;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 import java.sql.Connection;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +32,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -120,7 +123,7 @@ class FarmProfileVerticalIntegrationTest extends SpringPostgresTestSupport {
         mvc.perform(request(userA, organizationA, activeFarmA))
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
-                .andExpect(jsonPath("$.*", hasSize(4)))
+                .andExpect(jsonPath("$.*", hasSize(5)))
                 .andExpect(jsonPath("$.id").value(activeFarmA.toString()))
                 .andExpect(jsonPath("$.organizationId").value(organizationA.toString()))
                 .andExpect(jsonPath("$.name").value("Fazenda A"))
@@ -130,7 +133,7 @@ class FarmProfileVerticalIntegrationTest extends SpringPostgresTestSupport {
                 .andExpect(jsonPath("$.membershipId").doesNotExist())
                 .andExpect(jsonPath("$.role").doesNotExist())
                 .andExpect(jsonPath("$.farmScopeMode").doesNotExist())
-                .andExpect(jsonPath("$.version").doesNotExist())
+                .andExpect(jsonPath("$.version").value(0))
                 .andExpect(jsonPath("$.createdAt").doesNotExist())
                 .andExpect(jsonPath("$.updatedAt").doesNotExist())
                 .andExpect(jsonPath("$.email").doesNotExist())
@@ -156,7 +159,7 @@ class FarmProfileVerticalIntegrationTest extends SpringPostgresTestSupport {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"farmId\":\"" + activeFarmB + "\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.*", hasSize(4)))
+                .andExpect(jsonPath("$.*", hasSize(5)))
                 .andExpect(jsonPath("$.id").value(activeFarmA.toString()))
                 .andExpect(jsonPath("$.organizationId").value(organizationA.toString()));
 
@@ -204,6 +207,180 @@ class FarmProfileVerticalIntegrationTest extends SpringPostgresTestSupport {
                 .andExpect(jsonPath("$.code").value("INTERNAL_USER_SUSPENDED"));
     }
 
+    @Test
+    void patchUsesOnlyResolvedContextAndImplementsTheCompleteOptimisticLockingFlow() throws Exception {
+        mvc.perform(request(userA, organizationA, activeFarmA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Fazenda A"))
+                .andExpect(jsonPath("$.version").value(0));
+
+        mvc.perform(patchRequest(token(userA, Map.of(
+                                "farmId", activeFarmB.toString(),
+                                "organizationId", organizationB.toString(),
+                                "tenantId", organizationB.toString()
+                        )), organizationA, activeFarmA,
+                        "{\"name\":\"  Fazenda  São João  \",\"expectedVersion\":0}")
+                        .cookie(new Cookie("farmId", activeFarmB.toString()))
+                        .sessionAttr("farmId", activeFarmB.toString())
+                        .header("X-Alternate-Farm-Id", activeFarmB))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                .andExpect(jsonPath("$.*", hasSize(5)))
+                .andExpect(jsonPath("$.id").value(activeFarmA.toString()))
+                .andExpect(jsonPath("$.organizationId").value(organizationA.toString()))
+                .andExpect(jsonPath("$.name").value("Fazenda  São João"))
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.version").value(1))
+                .andExpect(jsonPath("$.updatedAt").doesNotExist())
+                .andExpect(jsonPath("$.userId").doesNotExist())
+                .andExpect(jsonPath("$.membershipId").doesNotExist());
+
+        mvc.perform(request(userA, organizationA, activeFarmA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Fazenda  São João"))
+                .andExpect(jsonPath("$.version").value(1));
+
+        mvc.perform(patchRequest(userA, organizationA, activeFarmA,
+                        "{\"name\":\"Conflitante\",\"expectedVersion\":0}").header("X-Request-ID", "patch-conflict"))
+                .andExpect(status().isConflict())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                .andExpect(jsonPath("$.code").value("FARM_PROFILE_VERSION_CONFLICT"))
+                .andExpect(jsonPath("$.requestId").value("patch-conflict"))
+                .andExpect(content().string(not(containsString("version"))));
+
+        mvc.perform(request(userA, organizationA, activeFarmA))
+                .andExpect(jsonPath("$.name").value("Fazenda  São João"))
+                .andExpect(jsonPath("$.version").value(1));
+        assertFarmName(activeFarmB, "Fazenda B");
+
+        mvc.perform(patchRequest(userA, organizationA, activeFarmA,
+                        "{\"name\":\"Não pode escolher outra\",\"expectedVersion\":1,\"farmId\":\"" + activeFarmB + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("FARM_PROFILE_UPDATE_INVALID"));
+        mvc.perform(patchRequest(userA, organizationA, activeFarmA,
+                        "{\"name\":\"Consulta ignorada\",\"expectedVersion\":1}")
+                        .queryParam("farmId", activeFarmB.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                .andExpect(jsonPath("$.code").value("FARM_PROFILE_UPDATE_INVALID"));
+        assertFarmName(activeFarmB, "Fazenda B");
+        mvc.perform(request(userA, organizationA, activeFarmA))
+                .andExpect(jsonPath("$.name").value("Fazenda  São João"))
+                .andExpect(jsonPath("$.version").value(1));
+    }
+
+    @Test
+    void patchRejectsAuthenticationContextAndPayloadFailuresWithoutChangingTheFarm() throws Exception {
+        mvc.perform(patch("/api/v1/farms/current").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Nome\",\"expectedVersion\":0}")
+                        .header("X-Request-ID", "patch-without-token"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.requestId").value("patch-without-token"));
+        mvc.perform(patch("/api/v1/farms/current").header(HttpHeaders.AUTHORIZATION, "Bearer inválido")
+                        .header("X-Organization-Id", organizationA).header("X-Farm-Id", activeFarmA)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(patch("/api/v1/farms/current").header(HttpHeaders.AUTHORIZATION, "Bearer " + token(userA))
+                        .header("X-Farm-Id", activeFarmA).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("TENANT_CONTEXT_HEADER_MISSING"));
+        mvc.perform(patch("/api/v1/farms/current").header(HttpHeaders.AUTHORIZATION, "Bearer " + token(userA))
+                        .header("X-Organization-Id", organizationA).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("TENANT_CONTEXT_HEADER_MISSING"));
+        mvc.perform(patchRequest(userA, "inválido", activeFarmA, "{}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("TENANT_CONTEXT_HEADER_INVALID"));
+        mvc.perform(patchRequest(userA, organizationA, "inválido", "{}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("TENANT_CONTEXT_HEADER_INVALID"));
+
+        FarmState stateBeforeRejectedPayloads = farmState(activeFarmA);
+        for (String body : List.of("", "{", "{}", "{\"name\":null,\"expectedVersion\":0}",
+                "{\"expectedVersion\":0}", "{\"name\":\"Nome\"}",
+                "{\"name\":\"   \",\"expectedVersion\":0}", "{\"name\":\"x" + "x".repeat(255) + "\",\"expectedVersion\":0}",
+                "{\"name\":\"Nome\",\"expectedVersion\":-1}", "{\"name\":\"Nome\",\"expectedVersion\":null}",
+                "{\"name\":\"Nome\",\"expectedVersion\":\"inválida\"}", "{\"name\":{},\"expectedVersion\":0}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"farmId\":\"" + activeFarmB + "\"}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"tenantId\":\"" + organizationB + "\"}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"organizationId\":\"" + organizationB + "\"}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"id\":\"" + activeFarmB + "\"}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"status\":\"ARCHIVED\"}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"version\":99}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"updatedAt\":\"2026-08-29T00:00:00Z\"}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"role\":\"ADMIN\"}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"membershipId\":\"" + membershipA + "\"}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"farmScopeMode\":\"ALL_FARMS\"}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"admin\":true}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"campoArbitrário\":true}")) {
+            mvc.perform(patchRequest(userA, organizationA, activeFarmA, body).header("X-Request-ID", "patch-invalid"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                    .andExpect(jsonPath("$.code").value("FARM_PROFILE_UPDATE_INVALID"))
+                    .andExpect(jsonPath("$.requestId").value("patch-invalid"))
+                    .andExpect(content().string(not(containsString("SQLException"))));
+        }
+        org.assertj.core.api.Assertions.assertThat(farmState(activeFarmA)).isEqualTo(stateBeforeRejectedPayloads);
+
+        String boundaryName = "A".repeat(255);
+        mvc.perform(patchRequest(userA, organizationA, activeFarmA,
+                        "{\"name\":\"  " + boundaryName + "  \",\"expectedVersion\":0}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value(boundaryName))
+                .andExpect(jsonPath("$.version").value(1));
+    }
+
+    @Test
+    void patchRejectsDuplicatePropertiesAndTrailingJsonWithoutChangingTheFarm() throws Exception {
+        FarmState before = farmState(activeFarmA);
+        for (String body : List.of(
+                "{\"name\":\"Primeiro\",\"name\":\"Segundo\",\"expectedVersion\":0}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0,\"expectedVersion\":9}",
+                "{\"name\":\"Nome\",\"expectedVersion\":0} {\"farmId\":\"" + activeFarmB + "\"}"
+        )) {
+            mvc.perform(patchRequest(userA, organizationA, activeFarmA, body)
+                            .header("X-Request-ID", "patch-duplicate"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                    .andExpect(jsonPath("$.code").value("FARM_PROFILE_UPDATE_INVALID"))
+                    .andExpect(jsonPath("$.requestId").value("patch-duplicate"));
+        }
+        org.assertj.core.api.Assertions.assertThat(farmState(activeFarmA)).isEqualTo(before);
+    }
+
+    @Test
+    void patchRejectsEveryNonEmptyQueryAndAnAlternativePathWithoutChangingTheFarm() throws Exception {
+        FarmState before = farmState(activeFarmA);
+        String body = "{\"name\":\"Não deve persistir\",\"expectedVersion\":0}";
+        for (String suffix : List.of(
+                "?farmId=" + activeFarmB,
+                "?tenantId=" + organizationB,
+                "?expectedVersion=0",
+                "?campo=arbitrário",
+                "?farmId=" + activeFarmB + "&tenantId=" + organizationB,
+                "?semValor",
+                "?campo=valor%20codificado"
+        )) {
+            mvc.perform(patchRequest(userA, organizationA, activeFarmA, body, suffix))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                    .andExpect(jsonPath("$.code").value("FARM_PROFILE_UPDATE_INVALID"));
+        }
+        mvc.perform(patchRequest(userA, organizationA, activeFarmA, body)
+                        .with(request -> {
+                            request.setQueryString("&&");
+                            return request;
+                        }))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                .andExpect(jsonPath("$.code").value("FARM_PROFILE_UPDATE_INVALID"));
+        mvc.perform(patch("/api/v1/farms/current/{farmId}", activeFarmB)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token(userA))
+                        .header("X-Organization-Id", organizationA)
+                        .header("X-Farm-Id", activeFarmA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNotFound());
+        org.assertj.core.api.Assertions.assertThat(farmState(activeFarmA)).isEqualTo(before);
+        org.assertj.core.api.Assertions.assertThat(farmState(activeFarmB).name()).isEqualTo("Fazenda B");
+    }
+
     private void assertGenericNotFound(MockHttpServletRequestBuilder request) throws Exception {
         mvc.perform(request.header("X-Request-ID", "farm-not-found"))
                 .andExpect(status().isNotFound())
@@ -231,6 +408,61 @@ class FarmProfileVerticalIntegrationTest extends SpringPostgresTestSupport {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token(user))
                 .header("X-Organization-Id", organization)
                 .header("X-Farm-Id", farm);
+    }
+
+    private static MockHttpServletRequestBuilder patchRequest(UUID user, Object organization, Object farm, String body)
+            throws Exception {
+        return patchRequest(token(user), organization, farm, body);
+    }
+
+    private static MockHttpServletRequestBuilder patchRequest(
+            String bearerToken, Object organization, Object farm, String body
+    ) {
+        return patch("/api/v1/farms/current")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + bearerToken)
+                .header("X-Organization-Id", organization)
+                .header("X-Farm-Id", farm)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body);
+    }
+
+    private static MockHttpServletRequestBuilder patchRequest(
+            UUID user, Object organization, Object farm, String body, String querySuffix
+    ) throws Exception {
+        return patch("/api/v1/farms/current" + querySuffix)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token(user))
+                .header("X-Organization-Id", organization)
+                .header("X-Farm-Id", farm)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body);
+    }
+
+    private static void assertFarmName(UUID farm, String name) throws Exception {
+        try (Connection connection = PostgresTestEnvironment.adminConnection();
+             var statement = connection.prepareStatement("select name from app.farms where id = ?")) {
+            statement.setObject(1, farm);
+            var result = statement.executeQuery();
+            result.next();
+            org.assertj.core.api.Assertions.assertThat(result.getString(1)).isEqualTo(name);
+        }
+    }
+
+    private static FarmState farmState(UUID farm) throws Exception {
+        try (Connection connection = PostgresTestEnvironment.adminConnection();
+             var statement = connection.prepareStatement(
+                     "select name, version, updated_at from app.farms where id = ?")) {
+            statement.setObject(1, farm);
+            var result = statement.executeQuery();
+            result.next();
+            return new FarmState(
+                    result.getString("name"),
+                    result.getLong("version"),
+                    result.getObject("updated_at", OffsetDateTime.class)
+            );
+        }
+    }
+
+    private record FarmState(String name, long version, OffsetDateTime updatedAt) {
     }
 
     private static String token(UUID user) throws Exception {

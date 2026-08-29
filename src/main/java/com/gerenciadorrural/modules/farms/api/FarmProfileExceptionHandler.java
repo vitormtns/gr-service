@@ -1,6 +1,7 @@
 package com.gerenciadorrural.modules.farms.api;
 
 import com.gerenciadorrural.modules.farms.application.FarmProfileNotAvailableException;
+import com.gerenciadorrural.modules.farms.application.FarmProfileVersionConflictException;
 import com.gerenciadorrural.modules.organizations.application.TenantContextNotAvailableException;
 import com.gerenciadorrural.shared.api.error.ApiErrorResponse;
 import com.gerenciadorrural.shared.observability.RequestContextFilter;
@@ -15,6 +16,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.TransactionException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 
 import java.time.Instant;
 import java.util.List;
@@ -22,6 +25,17 @@ import java.util.List;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 @RestControllerAdvice(assignableTypes = FarmProfileController.class)
 class FarmProfileExceptionHandler {
+
+    @ExceptionHandler({
+            MethodArgumentNotValidException.class,
+            HttpMessageNotReadableException.class,
+            FarmProfileUpdateRequestException.class
+    })
+    ResponseEntity<ApiErrorResponse> invalid(HttpServletRequest request) {
+        return error(HttpStatus.BAD_REQUEST, "FARM_PROFILE_UPDATE_INVALID", "A atualização do perfil da fazenda é inválida", request);
+    }
+    @ExceptionHandler(FarmProfileVersionConflictException.class)
+    ResponseEntity<ApiErrorResponse> conflict(HttpServletRequest request) { return error(HttpStatus.CONFLICT,"FARM_PROFILE_VERSION_CONFLICT","O perfil da fazenda foi alterado; recarregue antes de tentar novamente",request); }
 
     @ExceptionHandler({FarmProfileNotAvailableException.class, TenantContextNotAvailableException.class})
     ResponseEntity<ApiErrorResponse> unavailable(HttpServletRequest request) {

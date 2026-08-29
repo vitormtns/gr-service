@@ -48,6 +48,12 @@ Estas regras valem para todo o repositório. Antes de uma decisão arquitetural,
 48. Endpoints “current” usam exclusivamente IDs do TenantContext autorizado; controllers não aceitam farmId alternativo.
 49. Repositories tenant-aware filtram tenantId e o identificador do recurso, mas não executam `SET ROLE` ou `set_config`.
 50. Resolução de contexto é opt-in: nunca use filtro global, sessão ou ThreadLocal para tenancy. Respostas de leitura não expõem membership, role, escopo ou claims; ausência e acesso negado permanecem não enumeráveis.
+51. Toda escrita tenant-aware passa por `TenantTransactionExecutor`; tenantId e farmId vêm somente do `TenantContext` autorizado.
+52. Endpoints `current` não aceitam identificador alternativo e PATCH não aceita query parameters.
+53. DTOs de comando rejeitam campos desconhecidos ou proibidos; `expectedVersion` é obrigatória em escritas concorrentes.
+54. Conflito de versão nunca sobrescreve o recurso. O repository diferencia conflito de indisponibilidade e mantém a consulta diagnóstica na mesma transação.
+55. Repositories de atualização filtram tenant_id, id, status e version, não executam `SET ROLE` ou `set_config`, e recebem `updated_at` do banco.
+56. RLS não substitui filtros explícitos. Respostas 404 não enumeram existência ou estado, 409 não expõe a versão atual e 503 não expõe detalhes técnicos.
 
 ## Convenções de implementação
 

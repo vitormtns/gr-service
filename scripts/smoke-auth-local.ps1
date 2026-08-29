@@ -7,12 +7,20 @@ function Get-HttpStatus {
     param(
         [Parameter(Mandatory)]
         [string]$Uri,
-        [hashtable]$Headers = @{}
+        [hashtable]$Headers = @{},
+        [string]$Method = "Get",
+        [string]$Body = $null
     )
 
     try {
-        Invoke-WebRequest -Uri $Uri -Method Get -Headers $Headers -UseBasicParsing | Out-Null
-        return 200
+        $arguments = @{ Uri = $Uri; Method = $Method; Headers = $Headers; UseBasicParsing = $true }
+        $supportsRequestBody = $Method.ToUpperInvariant() -in @("POST", "PUT", "PATCH")
+        if ($supportsRequestBody -and $PSBoundParameters.ContainsKey("Body") -and $null -ne $Body) {
+            $arguments.ContentType = "application/json"
+            $arguments.Body = $Body
+        }
+        $response = Invoke-WebRequest @arguments
+        return [int]$response.StatusCode
     } catch {
         if ($_.Exception.Response) {
             return [int]$_.Exception.Response.StatusCode
@@ -30,6 +38,7 @@ function Get-SafeHttpFailure {
     $response = $ErrorRecord.Exception.Response
     $status = if ($response) { [int]$response.StatusCode } else { $null }
     $requestId = if ($response) { $response.Headers["X-Request-Id"] } else { $null }
+    $cacheControl = if ($response) { $response.Headers["Cache-Control"] } else { $null }
     $body = $ErrorRecord.ErrorDetails.Message
     if (-not $body -and $response -and $response.GetResponseStream) {
         $reader = [System.IO.StreamReader]::new($response.GetResponseStream())
@@ -51,8 +60,46 @@ function Get-SafeHttpFailure {
     return [pscustomobject]@{
         Status = $status
         RequestId = $requestId
+        CacheControl = $cacheControl
         Code = $code
         Body = $body
+    }
+}
+
+function Invoke-HttpCheck {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [hashtable]$Headers = @{},
+        [string]$Method = "Get",
+        [string]$Body = $null
+    )
+    try {
+        $arguments = @{ Uri = $Uri; Method = $Method; Headers = $Headers; UseBasicParsing = $true }
+        $supportsRequestBody = $Method.ToUpperInvariant() -in @("POST", "PUT", "PATCH")
+        if ($supportsRequestBody -and $PSBoundParameters.ContainsKey("Body") -and $null -ne $Body) {
+            $arguments.ContentType = "application/json"
+            $arguments.Body = $Body
+        }
+        $response = Invoke-WebRequest @arguments
+        return [pscustomobject]@{ Status = [int]$response.StatusCode; CacheControl = $response.Headers["Cache-Control"]; Code = $null; RequestId = $response.Headers["X-Request-Id"]; Content = $response.Content }
+    } catch {
+        $failure = Get-SafeHttpFailure -ErrorRecord $_
+        return [pscustomobject]@{ Status = $failure.Status; CacheControl = $failure.CacheControl; Code = $failure.Code; RequestId = $failure.RequestId; Content = $failure.Body }
+    }
+}
+
+function Assert-HttpStatus {
+    param(
+        [Parameter(Mandatory)][string]$Step,
+        [Parameter(Mandatory)][string]$Method,
+        [Parameter(Mandatory)][int]$ExpectedStatus,
+        [Parameter(Mandatory)]$Result
+    )
+
+    if ($Result.Status -ne $ExpectedStatus) {
+        $publicCode = if ($Result.Code) { $Result.Code } else { "ausente" }
+        $requestId = if ($Result.RequestId) { $Result.RequestId } else { "ausente" }
+        throw "Etapa '$Step' falhou: método=$Method; status esperado=$ExpectedStatus; status recebido=$($Result.Status); code=$publicCode; requestId=$requestId."
     }
 }
 
@@ -70,12 +117,26 @@ function Protect-DiagnosticFile {
     if ($null -eq $content) {
         $content = ""
     }
+    $content = Protect-DiagnosticText -Content $content -SensitiveValues $SensitiveValues
+    Set-Content -LiteralPath $Path -Value $content -NoNewline
+}
+
+function Protect-DiagnosticText {
+    param(
+        [AllowNull()]
+        [string]$Content,
+        [string[]]$SensitiveValues = @()
+    )
+
+    if ($null -eq $Content) {
+        return ""
+    }
     foreach ($value in $SensitiveValues) {
         if ($value) {
-            $content = $content.Replace([string]$value, "[PROTEGIDO]")
+            $Content = $Content.Replace([string]$value, "[PROTEGIDO]")
         }
     }
-    Set-Content -LiteralPath $Path -Value $content -NoNewline
+    return $Content
 }
 
 function Get-JavaExecutable {
@@ -221,6 +282,12 @@ grant app_api to $runtimeUsername;
             Get-Content -LiteralPath $stdoutLog.FullName -Tail 30 -ErrorAction SilentlyContinue
             Get-Content -LiteralPath $stderrLog.FullName -Tail 30 -ErrorAction SilentlyContinue
         ) -join [Environment]::NewLine
+        $safeLogTail = Protect-DiagnosticText -Content $safeLogTail -SensitiveValues @(
+            $runtimePassword,
+            $supabase.PUBLISHABLE_KEY, $supabase.ANON_KEY, $supabase.SECRET_KEY,
+            $supabase.SERVICE_ROLE_KEY, $supabase.JWT_SECRET,
+            $supabase.S3_PROTOCOL_ACCESS_KEY_ID, $supabase.S3_PROTOCOL_ACCESS_KEY_SECRET
+        )
         throw "A API local não iniciou para o smoke test. Logs: $safeLogTail"
     }
 
@@ -320,8 +387,28 @@ insert into app.farms (id, tenant_id, name, status) values
     }
     $allFarmsContextBody = $allFarmsContext.Content | ConvertFrom-Json
     $farmProfileUri = "http://127.0.0.1:$port/api/v1/farms/current"
-    $farmProfile = Invoke-WebRequest -Uri $farmProfileUri -Method Get -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $activeFarmId } -UseBasicParsing
+    $farmProfile = Invoke-HttpCheck -Uri $farmProfileUri -Method Get -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $activeFarmId }
+    Assert-HttpStatus -Step "GET inicial do perfil da fazenda" -Method "GET" -ExpectedStatus 200 -Result $farmProfile
     $farmProfileBody = $farmProfile.Content | ConvertFrom-Json
+    $farmProfileHeaders = @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $activeFarmId }
+    $initialFarmVersion = [long]$farmProfileBody.version
+    $patchBody = @{ name = "  Fazenda  Smoke Atualizada  "; expectedVersion = $initialFarmVersion } | ConvertTo-Json -Compress
+    $farmProfilePatch = Invoke-HttpCheck -Uri $farmProfileUri -Method Patch -Headers $farmProfileHeaders -Body $patchBody
+    Assert-HttpStatus -Step "PATCH válido do perfil da fazenda" -Method "PATCH" -ExpectedStatus 200 -Result $farmProfilePatch
+    $farmProfilePatchBody = $farmProfilePatch.Content | ConvertFrom-Json
+    $farmProfileAfterPatch = Invoke-HttpCheck -Uri $farmProfileUri -Method Get -Headers $farmProfileHeaders
+    Assert-HttpStatus -Step "GET após PATCH válido do perfil da fazenda" -Method "GET" -ExpectedStatus 200 -Result $farmProfileAfterPatch
+    $farmProfileAfterPatchBody = $farmProfileAfterPatch.Content | ConvertFrom-Json
+    $stalePatch = Invoke-HttpCheck -Uri $farmProfileUri -Method Patch -Headers $farmProfileHeaders -Body (@{ name = "Tentativa conflitante"; expectedVersion = $initialFarmVersion } | ConvertTo-Json -Compress)
+    $forbiddenField = Invoke-HttpCheck -Uri $farmProfileUri -Method Patch -Headers $farmProfileHeaders -Body (@{ name = "Campo proibido"; expectedVersion = ($initialFarmVersion + 1); farmId = $otherFarmId } | ConvertTo-Json -Compress)
+    $queryParameter = Invoke-HttpCheck -Uri "${farmProfileUri}?farmId=$otherFarmId" -Method Patch -Headers $farmProfileHeaders -Body (@{ name = "Query proibida"; expectedVersion = ($initialFarmVersion + 1) } | ConvertTo-Json -Compress)
+    $otherTenantPatch = Invoke-HttpCheck -Uri $farmProfileUri -Method Patch -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $otherOrganizationId; "X-Farm-Id" = $otherFarmId } -Body (@{ name = "Tentativa cross-tenant"; expectedVersion = 0 } | ConvertTo-Json -Compress)
+    Assert-HttpStatus -Step "PATCH de perfil de outra organização" -Method "PATCH" -ExpectedStatus 404 -Result $otherTenantPatch
+    $otherFarmProfile = Invoke-HttpCheck -Uri $farmProfileUri -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $otherOrganizationId; "X-Farm-Id" = $otherFarmId }
+    Assert-HttpStatus -Step "GET de perfil de outra organização" -Method "GET" -ExpectedStatus 404 -Result $otherFarmProfile
+    $farmProfileAfterRejected = Invoke-HttpCheck -Uri $farmProfileUri -Method Get -Headers $farmProfileHeaders
+    Assert-HttpStatus -Step "GET após PATCH rejeitado do perfil da fazenda" -Method "GET" -ExpectedStatus 200 -Result $farmProfileAfterRejected
+    $farmProfileAfterRejectedBody = $farmProfileAfterRejected.Content | ConvertFrom-Json
     $otherFarmProfileStatus = Get-HttpStatus -Uri $farmProfileUri -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $otherOrganizationId; "X-Farm-Id" = $otherFarmId }
     $crossTenantFarmProfileStatus = Get-HttpStatus -Uri $farmProfileUri -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $otherFarmId }
     $inactiveFarmProfileStatus = Get-HttpStatus -Uri $farmProfileUri -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $inactiveFarmId }
@@ -392,7 +479,14 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
         TenantContextAllFarms = $allFarmsContext.StatusCode -eq 200 -and $allFarmsContext.Headers["Cache-Control"] -match "no-store" -and $allFarmsContextBody.userId -eq $signup.user.id -and $allFarmsContextBody.organization.id -eq $organizationId -and $allFarmsContextBody.farm.id -eq $activeFarmId -and $allFarmsContextBody.membership.id -eq $membershipId -and $allFarmsContextBody.membership.farmScopeMode -eq "ALL_FARMS"
         TenantContextSelectedFarms = $selectedContext.farm.id -eq $secondActiveFarmId -and $selectedContext.membership.farmScopeMode -eq "SELECTED_FARMS"
         TenantContextUnselectedFarmRejected = $unselectedContextStatus -eq 404
-        FarmProfileCurrent = $farmProfile.StatusCode -eq 200 -and $farmProfile.Headers["Cache-Control"] -match "no-store" -and $farmProfileBody.id -eq $activeFarmId -and $farmProfileBody.organizationId -eq $organizationId -and $farmProfileBody.name -eq "Fazenda ativa A" -and $farmProfileBody.status -eq "ACTIVE" -and @($farmProfileBody.PSObject.Properties.Name).Count -eq 4 -and -not ($farmProfile.Content -match "membership|farmScopeMode|role")
+        FarmProfileCurrent = $farmProfile.Status -eq 200 -and $farmProfile.CacheControl -match "no-store" -and $farmProfileBody.id -eq $activeFarmId -and $farmProfileBody.organizationId -eq $organizationId -and $farmProfileBody.name -eq "Fazenda ativa A" -and $farmProfileBody.status -eq "ACTIVE" -and $farmProfileBody.version -eq 0 -and @($farmProfileBody.PSObject.Properties.Name).Count -eq 5 -and -not ($farmProfile.Content -match "membership|farmScopeMode|role|token|email|claims")
+        FarmProfilePatchUpdated = $farmProfilePatch.Status -eq 200 -and $farmProfilePatch.CacheControl -match "no-store" -and $farmProfilePatchBody.name -eq "Fazenda  Smoke Atualizada" -and $farmProfilePatchBody.version -eq ($initialFarmVersion + 1)
+        FarmProfilePatchReadBack = $farmProfileAfterPatch.Status -eq 200 -and $farmProfileAfterPatch.CacheControl -match "no-store" -and $farmProfileAfterPatchBody.name -eq "Fazenda  Smoke Atualizada" -and $farmProfileAfterPatchBody.version -eq ($initialFarmVersion + 1)
+        FarmProfilePatchConflictRejected = $stalePatch.Status -eq 409 -and $stalePatch.Code -eq "FARM_PROFILE_VERSION_CONFLICT" -and $stalePatch.CacheControl -match "no-store"
+        FarmProfilePatchForbiddenFieldRejected = $forbiddenField.Status -eq 400 -and $forbiddenField.Code -eq "FARM_PROFILE_UPDATE_INVALID" -and $forbiddenField.CacheControl -match "no-store"
+        FarmProfilePatchQueryRejected = $queryParameter.Status -eq 400 -and $queryParameter.Code -eq "FARM_PROFILE_UPDATE_INVALID" -and $queryParameter.CacheControl -match "no-store"
+        FarmProfilePatchOtherTenantRejected = $otherTenantPatch.Status -eq 404 -and $otherTenantPatch.Code -eq "FARM_PROFILE_NOT_AVAILABLE" -and $otherTenantPatch.CacheControl -match "no-store"
+        FarmProfilePatchRejectedUnchanged = $farmProfileAfterRejected.Status -eq 200 -and $farmProfileAfterRejected.CacheControl -match "no-store" -and $farmProfileAfterRejectedBody.name -eq "Fazenda  Smoke Atualizada" -and $farmProfileAfterRejectedBody.version -eq ($initialFarmVersion + 1)
         FarmProfileOtherOrganizationRejected = $otherFarmProfileStatus -eq 404
         FarmProfileCrossTenantRejected = $crossTenantFarmProfileStatus -eq 404
         FarmProfileInactiveRejected = $inactiveFarmProfileStatus -eq 404
@@ -414,6 +508,8 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
         $smokeResult.OtherUserOrganizationIsolated, $smokeResult.AllFarmsReturned,
         $smokeResult.TenantContextAllFarms, $smokeResult.TenantContextSelectedFarms, $smokeResult.TenantContextUnselectedFarmRejected,
         $smokeResult.FarmProfileCurrent, $smokeResult.FarmProfileOtherOrganizationRejected, $smokeResult.FarmProfileCrossTenantRejected, $smokeResult.FarmProfileInactiveRejected,
+        $smokeResult.FarmProfilePatchUpdated, $smokeResult.FarmProfilePatchReadBack, $smokeResult.FarmProfilePatchConflictRejected,
+        $smokeResult.FarmProfilePatchForbiddenFieldRejected, $smokeResult.FarmProfilePatchQueryRejected, $smokeResult.FarmProfilePatchOtherTenantRejected, $smokeResult.FarmProfilePatchRejectedUnchanged,
         $smokeResult.SelectedFarmsReturned, $smokeResult.OtherOrganizationFarmsIsolated,
         $smokeResult.SuspendedMembershipFarmsIsolated, $smokeResult.RevokedMembershipFarmsIsolated,
         $smokeResult.SuspendedOrganizationFarmsIsolated, $smokeResult.ArchivedOrganizationFarmsIsolated,
@@ -467,13 +563,13 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
         $cleanupFailures.Add("O reset final do Supabase local falhou.")
     }
     $preserveDiagnostics = $preserveDiagnostics -or $cleanupFailures.Count -gt 0
+    $sensitiveValues = @(
+        $runtimePassword, $email, $password, $accessToken,
+        $supabase.PUBLISHABLE_KEY, $supabase.ANON_KEY, $supabase.SECRET_KEY,
+        $supabase.SERVICE_ROLE_KEY, $supabase.JWT_SECRET,
+        $supabase.S3_PROTOCOL_ACCESS_KEY_ID, $supabase.S3_PROTOCOL_ACCESS_KEY_SECRET
+    )
     if ($preserveDiagnostics) {
-        $sensitiveValues = @(
-            $runtimePassword, $email, $password, $accessToken,
-            $supabase.PUBLISHABLE_KEY, $supabase.ANON_KEY, $supabase.SECRET_KEY,
-            $supabase.SERVICE_ROLE_KEY, $supabase.JWT_SECRET,
-            $supabase.S3_PROTOCOL_ACCESS_KEY_ID, $supabase.S3_PROTOCOL_ACCESS_KEY_SECRET
-        )
         Protect-DiagnosticFile -Path $stdoutLog.FullName -SensitiveValues $sensitiveValues
         Protect-DiagnosticFile -Path $stderrLog.FullName -SensitiveValues $sensitiveValues
         Write-Host "Logs temporários da API preservados: $($stdoutLog.FullName) e $($stderrLog.FullName)"
@@ -484,12 +580,16 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
 }
 
 if ($primaryFailure) {
-    $message = $primaryFailure.Exception.Message
+    $message = Protect-DiagnosticText -Content $primaryFailure.Exception.Message -SensitiveValues $sensitiveValues
     if ($cleanupFailures.Count -gt 0) {
         $message += " Falhas de limpeza: $($cleanupFailures -join ' ')"
     }
-    throw $message
+    Write-Error $message
+    exit 1
 }
 if ($cleanupFailures.Count -gt 0) {
-    throw ($cleanupFailures -join " ")
+    Write-Error ($cleanupFailures -join " ")
+    exit 1
 }
+
+exit 0
