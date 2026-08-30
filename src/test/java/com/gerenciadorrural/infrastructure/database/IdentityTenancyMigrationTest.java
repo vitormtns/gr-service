@@ -37,6 +37,7 @@ class IdentityTenancyMigrationTest extends PostgresMigrationTestSupport {
                         "users",
                         "organizations",
                         "farms",
+                        "animals",
                         "organization_memberships",
                         "membership_farm_scopes"
                 );
@@ -73,6 +74,7 @@ class IdentityTenancyMigrationTest extends PostgresMigrationTestSupport {
                 .containsExactlyInAnyOrder(
                         "organizations",
                         "farms",
+                        "animals",
                         "organization_memberships",
                         "membership_farm_scopes"
                 );
@@ -88,6 +90,7 @@ class IdentityTenancyMigrationTest extends PostgresMigrationTestSupport {
                     'users',
                     'organizations',
                     'farms',
+                    'animals',
                     'organization_memberships',
                     'membership_farm_scopes'
                   )

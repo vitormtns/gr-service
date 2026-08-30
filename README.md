@@ -191,6 +191,14 @@ Todas as respostas usam `Cache-Control: no-store`. Entrada inválida retorna `40
 
 O fluxo é `JWT → TenantContext autorizado → TenantTransactionExecutor → app.current_user_id → app.current_tenant_id → repository JDBC → RLS → HTTP`. O repository filtra explicitamente tenant e fazenda. Não são expostos membership, role, farmScopeMode, token, e-mail ou claims.
 
+## Rebanho da fazenda atual
+
+`app.animals` armazena animais individualmente, sempre vinculados por tenant e fazenda. A FK composta impede associação cruzada; a identificação é única por fazenda sem diferenciar caixa. A RLS protege o tenant e o repository também filtra `farm_id` explicitamente.
+
+`GET /api/v1/herd/animals` exige bearer token, `X-Organization-Id` e `X-Farm-Id`. Aceita apenas `search`, `sex`, `status`, `page` e `size`; a paginação começa em zero, tem tamanho padrão 50 e máximo 100. A resposta contém `items`, `page`, `size`, `totalElements` e `totalPages`; cada item contém somente `id`, `identification`, `name`, `sex`, `birthDate`, `status` e `version`. Todas as respostas usam `Cache-Control: no-store`.
+
+Filtros inválidos ou desconhecidos retornam `400 HERD_QUERY_INVALID`; falhas de persistência retornam `503 HERD_PERSISTENCE_UNAVAILABLE`, sem detalhes técnicos. A busca é case-insensitive e escapa curingas de `LIKE`.
+
 Leia o [modelo de identidade e tenancy](docs/architecture/identity-tenancy-data-model.md) para conhecer tabelas, relações, índices e camadas de segurança.
 
 ## Estrutura
