@@ -81,10 +81,10 @@ function Invoke-HttpCheck {
             $arguments.Body = $Body
         }
         $response = Invoke-WebRequest @arguments
-        return [pscustomobject]@{ Status = [int]$response.StatusCode; CacheControl = $response.Headers["Cache-Control"]; Code = $null; RequestId = $response.Headers["X-Request-Id"]; Content = $response.Content }
+        return [pscustomobject]@{ Status = [int]$response.StatusCode; CacheControl = $response.Headers["Cache-Control"]; ContentType = $response.Headers["Content-Type"]; Code = $null; RequestId = $response.Headers["X-Request-Id"]; Content = $response.Content }
     } catch {
         $failure = Get-SafeHttpFailure -ErrorRecord $_
-        return [pscustomobject]@{ Status = $failure.Status; CacheControl = $failure.CacheControl; Code = $failure.Code; RequestId = $failure.RequestId; Content = $failure.Body }
+        return [pscustomobject]@{ Status = $failure.Status; CacheControl = $failure.CacheControl; ContentType = $null; Code = $failure.Code; RequestId = $failure.RequestId; Content = $failure.Body }
     }
 }
 
@@ -327,6 +327,10 @@ grant app_api to $runtimeUsername;
     $secondActiveFarmId = [guid]::NewGuid().ToString()
     $inactiveFarmId = [guid]::NewGuid().ToString()
     $archivedFarmId = [guid]::NewGuid().ToString()
+    $animalAId = [guid]::NewGuid().ToString()
+    $animalBId = [guid]::NewGuid().ToString()
+    $animalCId = [guid]::NewGuid().ToString()
+    $animalDId = [guid]::NewGuid().ToString()
     $suspendedMembershipOrganizationId = [guid]::NewGuid().ToString()
     $revokedMembershipOrganizationId = [guid]::NewGuid().ToString()
     $suspendedOrganizationId = [guid]::NewGuid().ToString()
@@ -353,6 +357,11 @@ values
     ('$otherMembershipId'::uuid, '$otherOrganizationId'::uuid, '$otherUserId'::uuid, 'VIEWER', 'ACTIVE', 'SELECTED_FARMS');
 insert into app.farms (id, tenant_id, name, status)
 values ('$otherFarmId'::uuid, '$otherOrganizationId'::uuid, 'Fazenda de outro usuário', 'ACTIVE');
+insert into app.animals (id, tenant_id, farm_id, identification, name, sex, birth_date, status) values
+    ('$animalAId'::uuid, '$organizationId'::uuid, '$secondActiveFarmId'::uuid, 'A-001', null, 'MALE', null, 'ACTIVE'),
+    ('$animalBId'::uuid, '$organizationId'::uuid, '$secondActiveFarmId'::uuid, 'B-002', 'Brisa', 'FEMALE', '2024-03-15', 'ACTIVE'),
+    ('$animalCId'::uuid, '$organizationId'::uuid, '$activeFarmId'::uuid, 'C-003', 'Outra Fazenda', 'FEMALE', null, 'ACTIVE'),
+    ('$animalDId'::uuid, '$otherOrganizationId'::uuid, '$otherFarmId'::uuid, 'D-004', 'Outro Tenant', 'MALE', null, 'ACTIVE');
 insert into app.organizations (id, name, status) values
     ('$suspendedMembershipOrganizationId'::uuid, 'Membership suspenso', 'ACTIVE'),
     ('$revokedMembershipOrganizationId'::uuid, 'Membership revogado', 'ACTIVE'),
@@ -420,6 +429,33 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
     $selectedFarms = Invoke-RestMethod -Uri $farmsUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
     $selectedContext = Invoke-RestMethod -Uri $contextUri -Method Get -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $secondActiveFarmId }
     $unselectedContextStatus = Get-HttpStatus -Uri $contextUri -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $activeFarmId }
+    $herdUri = "http://127.0.0.1:$port/api/v1/herd/animals"
+    $herdHeaders = @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $secondActiveFarmId }
+    $herdMissingToken = Invoke-HttpCheck -Uri $herdUri
+    $herdList = Invoke-HttpCheck -Uri $herdUri -Headers $herdHeaders
+    $herdPage0 = Invoke-HttpCheck -Uri "${herdUri}?page=0&size=1" -Headers $herdHeaders
+    $herdPage1 = Invoke-HttpCheck -Uri "${herdUri}?page=1&size=1" -Headers $herdHeaders
+    $herdPage2 = Invoke-HttpCheck -Uri "${herdUri}?page=2&size=1" -Headers $herdHeaders
+    $herdMale = Invoke-HttpCheck -Uri "${herdUri}?sex=MALE" -Headers $herdHeaders
+    $herdFemale = Invoke-HttpCheck -Uri "${herdUri}?sex=FEMALE" -Headers $herdHeaders
+    $herdIdentification = Invoke-HttpCheck -Uri "${herdUri}?search=a-001" -Headers $herdHeaders
+    $herdName = Invoke-HttpCheck -Uri "${herdUri}?search=brisa" -Headers $herdHeaders
+    $herdCombined = Invoke-HttpCheck -Uri "${herdUri}?search=brisa&sex=FEMALE&status=ACTIVE" -Headers $herdHeaders
+    $herdEmpty = Invoke-HttpCheck -Uri "${herdUri}?search=inexistente" -Headers $herdHeaders
+    $herdInvalid = Invoke-HttpCheck -Uri "${herdUri}?page=-1" -Headers $herdHeaders
+    $herdUnknown = Invoke-HttpCheck -Uri "${herdUri}?sort=identification" -Headers $herdHeaders
+    $herdUnselectedFarmStatus = Get-HttpStatus -Uri $herdUri -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $organizationId; "X-Farm-Id" = $activeFarmId }
+    $herdOtherTenantStatus = Get-HttpStatus -Uri $herdUri -Headers @{ Authorization = "Bearer $accessToken"; "X-Organization-Id" = $otherOrganizationId; "X-Farm-Id" = $otherFarmId }
+    $herdListBody = $herdList.Content | ConvertFrom-Json
+    $herdPage0Body = $herdPage0.Content | ConvertFrom-Json
+    $herdPage1Body = $herdPage1.Content | ConvertFrom-Json
+    $herdPage2Body = $herdPage2.Content | ConvertFrom-Json
+    $herdMaleBody = $herdMale.Content | ConvertFrom-Json
+    $herdFemaleBody = $herdFemale.Content | ConvertFrom-Json
+    $herdIdentificationBody = $herdIdentification.Content | ConvertFrom-Json
+    $herdNameBody = $herdName.Content | ConvertFrom-Json
+    $herdCombinedBody = $herdCombined.Content | ConvertFrom-Json
+    $herdEmptyBody = $herdEmpty.Content | ConvertFrom-Json
     $otherFarmsUri = "http://127.0.0.1:$port/api/v1/me/organizations/$otherOrganizationId/farms"
     $otherFarms = Invoke-RestMethod -Uri $otherFarmsUri -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
     $suspendedMembershipFarms = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/v1/me/organizations/$suspendedMembershipOrganizationId/farms" -Method Get -Headers @{ Authorization = "Bearer $accessToken" }
@@ -497,6 +533,13 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
         SensitiveColumnsFound = [int]$sensitiveColumnCount
         MissingTokenStatus = $missingTokenStatus
         AlteredTokenStatus = $alteredTokenStatus
+        HerdAuthenticationRejected = $herdMissingToken.Status -eq 401 -and $herdMissingToken.Content -notmatch "A-001|B-002|SQLException|JdbcTemplate"
+        HerdListing = $herdList.Status -eq 200 -and $herdList.ContentType -match "application/json" -and $herdList.CacheControl -match "no-store" -and $herdListBody.page -eq 0 -and $herdListBody.size -eq 50 -and $herdListBody.totalElements -eq 2 -and $herdListBody.totalPages -eq 1 -and ((@($herdListBody.items).identification -join ",") -ceq "A-001,B-002") -and $herdList.Content -notmatch "C-003|D-004|tenantId|farmId|createdAt|updatedAt|token|claims"
+        HerdPublicContract = @($herdListBody.PSObject.Properties.Name).Count -eq 5 -and @($herdListBody.items[0].PSObject.Properties.Name).Count -eq 7
+        HerdPagination = $herdPage0.Status -eq 200 -and $herdPage0Body.totalPages -eq 2 -and ((@($herdPage0Body.items).identification -join ",") -ceq "A-001") -and $herdPage1.Status -eq 200 -and ((@($herdPage1Body.items).identification -join ",") -ceq "B-002") -and $herdPage2.Status -eq 200 -and @($herdPage2Body.items).Count -eq 0 -and $herdPage2Body.totalElements -eq 2 -and $herdPage2Body.totalPages -eq 2
+        HerdFilters = ((@($herdMaleBody.items).identification -join ",") -ceq "A-001") -and ((@($herdFemaleBody.items).identification -join ",") -ceq "B-002") -and ((@($herdIdentificationBody.items).identification -join ",") -ceq "A-001") -and ((@($herdNameBody.items).identification -join ",") -ceq "B-002") -and ((@($herdCombinedBody.items).identification -join ",") -ceq "B-002") -and $herdEmpty.Status -eq 200 -and @($herdEmptyBody.items).Count -eq 0 -and $herdEmptyBody.totalElements -eq 0 -and $herdEmptyBody.totalPages -eq 0
+        HerdInvalidQueries = $herdInvalid.Status -eq 400 -and $herdInvalid.Code -eq "HERD_QUERY_INVALID" -and $herdInvalid.CacheControl -match "no-store" -and $herdUnknown.Status -eq 400 -and $herdUnknown.Code -eq "HERD_QUERY_INVALID" -and $herdUnknown.CacheControl -match "no-store" -and $herdInvalid.Content -notmatch "SQLException|JdbcTemplate"
+        HerdIsolation = $herdUnselectedFarmStatus -eq 404 -and $herdOtherTenantStatus -eq 404
         RawTokenFoundInApiLog = $apiLogs.Contains($accessToken)
         EmailFoundInApiLog = $apiLogs.Contains($email)
     } | Tee-Object -Variable smokeResult
@@ -513,6 +556,8 @@ values ('$organizationId'::uuid, '$membershipId'::uuid, '$secondActiveFarmId'::u
         $smokeResult.SelectedFarmsReturned, $smokeResult.OtherOrganizationFarmsIsolated,
         $smokeResult.SuspendedMembershipFarmsIsolated, $smokeResult.RevokedMembershipFarmsIsolated,
         $smokeResult.SuspendedOrganizationFarmsIsolated, $smokeResult.ArchivedOrganizationFarmsIsolated,
+        $smokeResult.HerdAuthenticationRejected, $smokeResult.HerdListing, $smokeResult.HerdPublicContract,
+        $smokeResult.HerdPagination, $smokeResult.HerdFilters, $smokeResult.HerdInvalidQueries, $smokeResult.HerdIsolation,
         ($smokeResult.MissingTokenStatus -eq 401), ($smokeResult.AlteredTokenStatus -eq 401),
         (-not $smokeResult.FarmsOrPermissionsReturned), ($smokeResult.SensitiveColumnsFound -eq 0),
         (-not $smokeResult.RawTokenFoundInApiLog), (-not $smokeResult.EmailFoundInApiLog)
