@@ -101,6 +101,35 @@ class HerdAnimalControllerContractTest {
     }
 
     @Test
+    void rejectsPageOffsetOverflowsWithoutCallingTheUseCase() throws Exception {
+        List<MockHttpServletRequestBuilder> invalidRequests = List.of(
+            get("/api/v1/herd/animals").queryParam("page", "42949673").queryParam("size", "100"),
+            get("/api/v1/herd/animals").queryParam("page", "2147483647").queryParam("size", "100")
+        );
+
+        for (MockHttpServletRequestBuilder request : invalidRequests) {
+            mvc.perform(request)
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                .andExpect(jsonPath("$.code").value("HERD_QUERY_INVALID"))
+                .andExpect(content().string(not(containsString("HERD_PERSISTENCE_UNAVAILABLE"))))
+                .andExpect(content().string(not(containsString("SQLException"))));
+        }
+
+        verifyNoInteractions(listCurrentFarmAnimals);
+    }
+
+    @Test
+    void acceptsTheLargestOffsetWithinTheOperationalLimit() throws Exception {
+        List<HerdAnimalQuery> queries = recordQueries();
+
+        mvc.perform(get("/api/v1/herd/animals").queryParam("page", "21474836").queryParam("size", "100"))
+            .andExpect(status().isOk());
+
+        assertThat(queries).containsExactly(new HerdAnimalQuery(null, null, null, 21474836, 100));
+    }
+
+    @Test
     void appliesDefaultsAndNormalizesSearchWithoutChangingInternalWhitespace()
         throws Exception {
         List<HerdAnimalQuery> queries = recordQueries();
