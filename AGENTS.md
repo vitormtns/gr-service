@@ -54,6 +54,9 @@ Estas regras valem para todo o repositório. Antes de uma decisão arquitetural,
 54. Conflito de versão nunca sobrescreve o recurso. O repository diferencia conflito de indisponibilidade e mantém a consulta diagnóstica na mesma transação.
 55. Repositories de atualização filtram tenant_id, id, status e version, não executam `SET ROLE` ou `set_config`, e recebem `updated_at` do banco.
 56. RLS não substitui filtros explícitos. Respostas 404 não enumeram existência ou estado, 409 não expõe a versão atual e 503 não expõe detalhes técnicos.
+57. Toda consulta de rebanho recebe tenantId e farmId do TenantContext; RLS não substitui o filtro explícito de fazenda.
+58. A identificação do animal é única por fazenda sem diferenciar caixa; paginação é limitada e buscas escapam curingas de LIKE.
+59. Portas de rebanho não dependem de Spring Data e repositories não configuram contexto transacional nem expõem IDs internos no contrato público.
 
 ## Convenções de implementação
 
