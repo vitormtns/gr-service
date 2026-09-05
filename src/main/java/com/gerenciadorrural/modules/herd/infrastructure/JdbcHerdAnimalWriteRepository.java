@@ -4,11 +4,14 @@ import com.gerenciadorrural.modules.herd.domain.HerdAnimalSex;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalStatus;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSummary;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalWriteRepository;
+import com.gerenciadorrural.modules.herd.domain.HerdAnimalWriteConflictException;
 import com.gerenciadorrural.modules.herd.domain.NewHerdAnimal;
 import com.gerenciadorrural.shared.tenancy.TenantId;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.postgresql.util.PSQLException;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -24,7 +27,8 @@ public class JdbcHerdAnimalWriteRepository implements HerdAnimalWriteRepository 
 
     @Override
     public HerdAnimalSummary insert(NewHerdAnimal animal) {
-        return jdbc.queryForObject("""
+        try {
+            return jdbc.queryForObject("""
                 insert into app.animals (
                     id, tenant_id, farm_id, identification, name, sex, birth_date
                 ) values (
@@ -32,6 +36,13 @@ public class JdbcHerdAnimalWriteRepository implements HerdAnimalWriteRepository 
                 )
                 returning id, identification, name, sex, birth_date, status, version
                 """, parameters(animal), this::mapAnimal);
+        } catch (DataIntegrityViolationException exception) {
+            HerdAnimalWriteConflictException.Type type = conflictType(exception);
+            if (type != null) {
+                throw new HerdAnimalWriteConflictException(type, exception);
+            }
+            throw exception;
+        }
     }
 
     @Override
@@ -67,5 +78,21 @@ public class JdbcHerdAnimalWriteRepository implements HerdAnimalWriteRepository 
                 HerdAnimalStatus.valueOf(resultSet.getString("status")),
                 resultSet.getLong("version")
         );
+    }
+
+    private static HerdAnimalWriteConflictException.Type conflictType(Throwable exception) {
+        Throwable current = exception;
+        while (current != null && !(current instanceof PSQLException)) {
+            current = current.getCause();
+        }
+        if (!(current instanceof PSQLException postgres) || !"23505".equals(postgres.getSQLState())
+                || postgres.getServerErrorMessage() == null) {
+            return null;
+        }
+        return switch (postgres.getServerErrorMessage().getConstraint()) {
+            case "animals_pkey" -> HerdAnimalWriteConflictException.Type.ID_CONFLICT;
+            case "animals_tenant_farm_identification_unique" -> HerdAnimalWriteConflictException.Type.IDENTIFICATION_CONFLICT;
+            default -> null;
+        };
     }
 }
