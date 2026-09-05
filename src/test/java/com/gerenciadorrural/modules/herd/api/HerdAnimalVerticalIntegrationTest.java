@@ -30,6 +30,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -475,6 +476,25 @@ class HerdAnimalVerticalIntegrationTest extends SpringPostgresTestSupport {
             .andExpect(content().string(not(containsString("D-004"))))
             .andExpect(jsonPath("$.items[0].tenantId").doesNotExist())
             .andExpect(jsonPath("$.items[0].farmId").doesNotExist());
+    }
+
+    @Test
+    void createsAndReplaysAnimalsThroughTheRealHttpSecurityAndPersistenceFlow() throws Exception {
+        UUID id = UUID.randomUUID();
+        String body = "{\"id\":\"" + id + "\",\"identification\":\"  E-005  \",\"name\":\"  Brisa  \",\"sex\":\"FEMALE\",\"birthDate\":\"2024-03-15\"}";
+        var request = post("/api/v1/herd/animals").contentType("application/json")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token()).header("X-Organization-Id", tenantAId).header("X-Farm-Id", farmA1Id);
+        mvc.perform(request.content(body)).andExpect(status().isCreated()).andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                .andExpect(jsonPath("$.*", hasSize(7))).andExpect(jsonPath("$.id").value(id.toString())).andExpect(jsonPath("$.identification").value("E-005"))
+                .andExpect(jsonPath("$.name").value("Brisa")).andExpect(jsonPath("$.status").value("ACTIVE")).andExpect(jsonPath("$.version").value(0));
+        mvc.perform(request.content("{\"id\":\"" + id + "\",\"identification\":\"\\tE-005\\n\",\"name\":\" Brisa \",\"sex\":\"FEMALE\",\"birthDate\":\"2024-03-15\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.version").value(0));
+        mvc.perform(request.content("{\"id\":\"" + id + "\",\"identification\":\"E-005\",\"name\":\"Outra\",\"sex\":\"FEMALE\",\"birthDate\":\"2024-03-15\"}"))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("HERD_IDEMPOTENCY_CONFLICT"));
+        mvc.perform(request.content("{\"id\":\"" + UUID.randomUUID() + "\",\"identification\":\" E-005 \",\"sex\":\"FEMALE\"}"))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("HERD_IDENTIFICATION_CONFLICT"));
+        mvc.perform(get("/api/v1/herd/animals").queryParam("search", "E-005").header(HttpHeaders.AUTHORIZATION, "Bearer " + token()).header("X-Organization-Id", tenantAId).header("X-Farm-Id", farmA1Id))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1));
     }
 
     private String token() throws Exception {
