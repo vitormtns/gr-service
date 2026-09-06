@@ -1,6 +1,7 @@
 package com.gerenciadorrural.modules.herd.infrastructure;
 
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSex;
+import com.gerenciadorrural.modules.herd.domain.HerdAnimalInsertResult;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalStatus;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSummary;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalWriteRepository;
@@ -26,16 +27,23 @@ public class JdbcHerdAnimalWriteRepository implements HerdAnimalWriteRepository 
     }
 
     @Override
-    public HerdAnimalSummary insert(NewHerdAnimal animal) {
+    public HerdAnimalInsertResult insert(NewHerdAnimal animal) {
         try {
-            return jdbc.queryForObject("""
+            return jdbc.query("""
+                with id_lock as materialized (
+                    select pg_advisory_xact_lock(hashtextextended(cast(:id as text), 0))
+                )
                 insert into app.animals (
                     id, tenant_id, farm_id, identification, name, sex, birth_date
-                ) values (
-                    :id, :tenantId, :farmId, :identification, :name, :sex, :birthDate
                 )
+                select :id, :tenantId, :farmId, :identification, :name, :sex, :birthDate
+                from id_lock
+                on conflict on constraint animals_pkey do nothing
                 returning id, identification, name, sex, birth_date, status, version
-                """, parameters(animal), this::mapAnimal);
+                """, parameters(animal), this::mapAnimal).stream()
+                    .findFirst()
+                    .map(HerdAnimalInsertResult::inserted)
+                    .orElseGet(HerdAnimalInsertResult::idAlreadyExists);
         } catch (DataIntegrityViolationException exception) {
             HerdAnimalWriteConflictException.Type type = conflictType(exception);
             if (type != null) {
@@ -89,10 +97,9 @@ public class JdbcHerdAnimalWriteRepository implements HerdAnimalWriteRepository 
                 || postgres.getServerErrorMessage() == null) {
             return null;
         }
-        return switch (postgres.getServerErrorMessage().getConstraint()) {
-            case "animals_pkey" -> HerdAnimalWriteConflictException.Type.ID_CONFLICT;
-            case "animals_tenant_farm_identification_unique" -> HerdAnimalWriteConflictException.Type.IDENTIFICATION_CONFLICT;
-            default -> null;
-        };
+        return "animals_tenant_farm_identification_unique".equals(
+                postgres.getServerErrorMessage().getConstraint())
+                ? HerdAnimalWriteConflictException.Type.IDENTIFICATION_CONFLICT
+                : null;
     }
 }

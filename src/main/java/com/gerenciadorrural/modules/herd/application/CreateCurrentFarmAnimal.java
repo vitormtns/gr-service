@@ -1,6 +1,7 @@
 package com.gerenciadorrural.modules.herd.application;
 
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSummary;
+import com.gerenciadorrural.modules.herd.domain.HerdAnimalInsertResult;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalWriteConflictException;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalWriteRepository;
 import com.gerenciadorrural.modules.herd.domain.NewHerdAnimal;
@@ -47,18 +48,19 @@ public class CreateCurrentFarmAnimal {
 
     private CreateCurrentFarmAnimalResult insert(NewHerdAnimal proposed) {
         try {
-            return new CreateCurrentFarmAnimalResult(
-                    CreateCurrentFarmAnimalResult.Outcome.CREATED,
-                    repository.insert(proposed)
-            );
+            HerdAnimalInsertResult result = repository.insert(proposed);
+            if (result.outcome() == HerdAnimalInsertResult.Outcome.INSERTED) {
+                return new CreateCurrentFarmAnimalResult(
+                        CreateCurrentFarmAnimalResult.Outcome.CREATED,
+                        result.animal().orElseThrow()
+                );
+            }
+            return repository.findById(proposed.tenantId(), proposed.farmId(), proposed.id())
+                    .map(existing -> replay(existing, proposed))
+                    .orElseThrow(HerdAnimalIdempotencyConflictException::new);
         } catch (HerdAnimalWriteConflictException conflict) {
             if (conflict.type() == HerdAnimalWriteConflictException.Type.IDENTIFICATION_CONFLICT) {
                 throw new HerdAnimalIdentificationConflictException();
-            }
-            if (conflict.type() == HerdAnimalWriteConflictException.Type.ID_CONFLICT) {
-                return repository.findById(proposed.tenantId(), proposed.farmId(), proposed.id())
-                        .map(existing -> replay(existing, proposed))
-                        .orElseThrow(HerdAnimalIdempotencyConflictException::new);
             }
             throw conflict;
         }

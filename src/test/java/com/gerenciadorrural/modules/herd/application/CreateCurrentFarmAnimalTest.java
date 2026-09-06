@@ -1,6 +1,7 @@
 package com.gerenciadorrural.modules.herd.application;
 
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSex;
+import com.gerenciadorrural.modules.herd.domain.HerdAnimalInsertResult;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalStatus;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSummary;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalWriteConflictException;
@@ -54,7 +55,8 @@ class CreateCurrentFarmAnimalTest {
             TenantContext allowed = context(role);
             UUID id = id();
             when(repository.findById(allowed.tenantId(), allowed.farmId(), id)).thenReturn(Optional.empty());
-            doAnswer(invocation -> summary((NewHerdAnimal) invocation.getArgument(0))).when(repository).insert(any());
+            doAnswer(invocation -> HerdAnimalInsertResult.inserted(summary((NewHerdAnimal) invocation.getArgument(0))))
+                    .when(repository).insert(any());
             assertThat(useCase.execute(allowed, command(id, "A-001", "Nome", HerdAnimalSex.FEMALE, null)).outcome())
                     .isEqualTo(CreateCurrentFarmAnimalResult.Outcome.CREATED);
         }
@@ -76,7 +78,7 @@ class CreateCurrentFarmAnimalTest {
         when(repository.findById(context.tenantId(), context.farmId(), id)).thenReturn(Optional.empty());
         when(repository.insert(any())).thenAnswer(invocation -> {
             assertThat(insideTransaction).isTrue();
-            return summary((NewHerdAnimal) invocation.getArgument(0));
+            return HerdAnimalInsertResult.inserted(summary((NewHerdAnimal) invocation.getArgument(0)));
         });
 
         useCase.execute(context, command(id, " \tA  B\n\r\f\u000B", "\t Nome  interno \n", HerdAnimalSex.FEMALE, LocalDate.of(2020, 1, 1)));
@@ -109,7 +111,8 @@ class CreateCurrentFarmAnimalTest {
         for (LocalDate date : new LocalDate[]{LocalDate.of(2026, 9, 5), LocalDate.of(1900, 1, 1), null}) {
             UUID id = id();
             when(repository.findById(context.tenantId(), context.farmId(), id)).thenReturn(Optional.empty());
-            doAnswer(invocation -> summary((NewHerdAnimal) invocation.getArgument(0))).when(repository).insert(any());
+            doAnswer(invocation -> HerdAnimalInsertResult.inserted(summary((NewHerdAnimal) invocation.getArgument(0))))
+                    .when(repository).insert(any());
             CreateCurrentFarmAnimalResult result = useCase.execute(context, command(id, "A-" + id, null, HerdAnimalSex.MALE, date));
             assertThat(result.animal().birthDate()).isEqualTo(date);
             assertThat(result.animal().name()).isNull();
@@ -160,20 +163,18 @@ class CreateCurrentFarmAnimalTest {
     }
 
     @Test
-    void handlesIdConflictRaceByRereadingOnlyTheCurrentContext() {
+    void handlesIdAlreadyExistsByRereadingOnlyTheCurrentContext() {
         UUID id = id();
         HerdAnimalSummary equal = new HerdAnimalSummary(id, "A", null, HerdAnimalSex.MALE, null, HerdAnimalStatus.ACTIVE, 0);
         when(repository.findById(context.tenantId(), context.farmId(), id)).thenReturn(Optional.empty(), Optional.of(equal));
-        doThrow(new HerdAnimalWriteConflictException(HerdAnimalWriteConflictException.Type.ID_CONFLICT, new RuntimeException()))
-                .when(repository).insert(any());
+        when(repository.insert(any())).thenReturn(HerdAnimalInsertResult.idAlreadyExists());
         assertThat(useCase.execute(context, command(id, "A", null, HerdAnimalSex.MALE, null)).outcome())
                 .isEqualTo(CreateCurrentFarmAnimalResult.Outcome.REPLAYED);
 
         UUID divergentId = id();
         HerdAnimalSummary divergent = new HerdAnimalSummary(divergentId, "Outro", null, HerdAnimalSex.MALE, null, HerdAnimalStatus.ACTIVE, 0);
         when(repository.findById(context.tenantId(), context.farmId(), divergentId)).thenReturn(Optional.empty(), Optional.of(divergent));
-        doThrow(new HerdAnimalWriteConflictException(HerdAnimalWriteConflictException.Type.ID_CONFLICT, new RuntimeException()))
-                .when(repository).insert(any());
+        when(repository.insert(any())).thenReturn(HerdAnimalInsertResult.idAlreadyExists());
         assertThatThrownBy(() -> useCase.execute(context, command(divergentId, "A", null, HerdAnimalSex.MALE, null)))
                 .isInstanceOf(HerdAnimalIdempotencyConflictException.class);
 

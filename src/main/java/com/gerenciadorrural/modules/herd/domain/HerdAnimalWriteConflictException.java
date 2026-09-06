@@ -4,7 +4,6 @@ package com.gerenciadorrural.modules.herd.domain;
 public class HerdAnimalWriteConflictException extends RuntimeException {
 
     public enum Type {
-        ID_CONFLICT,
         IDENTIFICATION_CONFLICT
     }
 

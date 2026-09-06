@@ -1,6 +1,7 @@
 package com.gerenciadorrural.infrastructure.database;
 
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSex;
+import com.gerenciadorrural.modules.herd.domain.HerdAnimalInsertResult;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSummary;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalWriteConflictException;
 import com.gerenciadorrural.modules.herd.domain.NewHerdAnimal;
@@ -15,6 +16,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -120,13 +122,42 @@ class HerdAnimalWriteRepositoryIntegrationTest extends PostgresMigrationTestSupp
     }
 
     @Test
-    void preservesPrimaryKeyAndNormalizedIdentificationConflictsForFutureClassification() {
+    void primaryKeyCollisionReturnsExplicitOutcomeAndKeepsTheTransactionUsable() {
         UUID id = UUID.randomUUID();
-        insert(contextA(), animal(id, tenantA, farmA, "A-001", null, null));
-        assertConflict(() -> insert(contextA(), animal(id, tenantA, farmA, "Outro", null, null)),
-                HerdAnimalWriteConflictException.Type.ID_CONFLICT);
-        assertConflict(() -> insert(contextA(), animal(UUID.randomUUID(), tenantA, farmA, "\tA-001\n", null, null)),
-                HerdAnimalWriteConflictException.Type.IDENTIFICATION_CONFLICT);
+        NewHerdAnimal proposed = animal(id, tenantA, farmA, "A-001", null, null);
+
+        transactions.execute(contextA(), () -> {
+            HerdAnimalInsertResult first = repository.insert(proposed);
+            HerdAnimalInsertResult second = repository.insert(proposed);
+
+            assertThat(first.outcome()).isEqualTo(HerdAnimalInsertResult.Outcome.INSERTED);
+            assertThat(first.animal()).hasValueSatisfying(created -> assertThat(created.id()).isEqualTo(id));
+            assertThat(second.outcome()).isEqualTo(HerdAnimalInsertResult.Outcome.ID_ALREADY_EXISTS);
+            assertThat(second.animal()).isEmpty();
+            assertThat(repository.findById(new TenantId(tenantA), farmA, id))
+                    .hasValueSatisfying(found -> assertThat(found.identification()).isEqualTo("A-001"));
+            return null;
+        });
+
+        assertThat(storedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void identificationCollisionRemainsStructuredPostgresUniqueViolation() {
+        insert(contextA(), animal(UUID.randomUUID(), tenantA, farmA, "A-001", null, null));
+
+        assertThatThrownBy(() -> insert(contextA(),
+                animal(UUID.randomUUID(), tenantA, farmA, "\tA-001\n", null, null)))
+                .isInstanceOf(HerdAnimalWriteConflictException.class)
+                .satisfies(exception -> {
+                    HerdAnimalWriteConflictException conflict = (HerdAnimalWriteConflictException) exception;
+                    assertThat(conflict.type()).isEqualTo(HerdAnimalWriteConflictException.Type.IDENTIFICATION_CONFLICT);
+                    PSQLException postgres = postgresCause(conflict);
+                    assertThat(postgres.getSQLState()).isEqualTo("23505");
+                    assertThat(postgres.getServerErrorMessage()).isNotNull();
+                    assertThat(postgres.getServerErrorMessage().getConstraint())
+                            .isEqualTo("animals_tenant_farm_identification_unique");
+                });
     }
 
     @Test
@@ -138,19 +169,20 @@ class HerdAnimalWriteRepositoryIntegrationTest extends PostgresMigrationTestSupp
     }
 
     private HerdAnimalSummary insert(TenantContext context, NewHerdAnimal animal) {
-        return transactions.execute(context, () -> repository.insert(animal));
+        return transactions.execute(context, () -> repository.insert(animal).animal().orElseThrow());
     }
 
     private NewHerdAnimal animal(UUID id, UUID tenant, UUID farm, String identification, String name, LocalDate birthDate) {
         return new NewHerdAnimal(id, new TenantId(tenant), farm, identification, name, HerdAnimalSex.FEMALE, birthDate);
     }
 
-    private void assertConflict(
-            org.assertj.core.api.ThrowableAssert.ThrowingCallable action,
-            HerdAnimalWriteConflictException.Type expectedType
-    ) {
-        assertThatThrownBy(action).isInstanceOf(HerdAnimalWriteConflictException.class)
-                .satisfies(exception -> assertThat(((HerdAnimalWriteConflictException) exception).type()).isEqualTo(expectedType));
+    private static PSQLException postgresCause(Throwable exception) {
+        Throwable current = exception;
+        while (current != null && !(current instanceof PSQLException)) {
+            current = current.getCause();
+        }
+        assertThat(current).isInstanceOf(PSQLException.class);
+        return (PSQLException) current;
     }
 
     private void createRuntimeRole() throws Exception {
