@@ -87,8 +87,8 @@ public class CreateCurrentFarmAnimal {
         }
         String identification = PosixEdgeWhitespace.trim(command.identification());
         String name = command.name() == null ? null : PosixEdgeWhitespace.trim(command.name());
-        if (identification.isEmpty() || identification.length() > 100
-                || (name != null && (name.isEmpty() || name.length() > 255))
+        if (identification.isEmpty() || identification.indexOf('\u0000') >= 0 || identification.codePointCount(0, identification.length()) > 100
+                || (name != null && (name.isEmpty() || name.indexOf('\u0000') >= 0 || name.codePointCount(0, name.length()) > 255))
                 || (command.birthDate() != null && command.birthDate().isAfter(LocalDate.now(clock)))) {
             throw new HerdAnimalCommandInvalidException();
         }

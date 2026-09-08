@@ -98,12 +98,28 @@ class CreateCurrentFarmAnimalTest {
         assertInvalid(new CreateCurrentFarmAnimalCommand(id(), null, null, HerdAnimalSex.MALE, null));
         assertInvalid(command(id(), " \t\n\r\f\u000B", null, HerdAnimalSex.MALE, null));
         assertInvalid(command(id(), "A".repeat(101), null, HerdAnimalSex.MALE, null));
+        assertInvalid(command(id(), "A\u0000B", null, HerdAnimalSex.MALE, null));
         assertInvalid(command(id(), "A", " \t", HerdAnimalSex.MALE, null));
         assertInvalid(command(id(), "A", "N".repeat(256), HerdAnimalSex.MALE, null));
+        assertInvalid(command(id(), "A", "Nome\u0000", HerdAnimalSex.MALE, null));
         assertInvalid(command(id(), "A", null, null, null));
         assertInvalid(command(id(), "A", null, HerdAnimalSex.MALE, LocalDate.of(2026, 9, 6)));
         verify(transactions, never()).execute(any(), any(TenantTransactionalOperation.class));
         verify(repository, never()).findById(any(), any(), any());
+    }
+
+    @Test
+    void countsUnicodeCodePointsLikePostgreSqlTextLength() {
+        String emoji = "\uD83D\uDC04";
+        UUID id = id();
+        when(repository.findById(context.tenantId(), context.farmId(), id)).thenReturn(Optional.empty());
+        when(repository.insert(any())).thenAnswer(invocation -> HerdAnimalInsertResult.inserted(summary(invocation.getArgument(0))));
+
+        CreateCurrentFarmAnimalResult result = useCase.execute(context, command(id, emoji.repeat(51), emoji.repeat(255), HerdAnimalSex.FEMALE, null));
+
+        assertThat(result.outcome()).isEqualTo(CreateCurrentFarmAnimalResult.Outcome.CREATED);
+        assertInvalid(command(id(), emoji.repeat(101), null, HerdAnimalSex.FEMALE, null));
+        assertInvalid(command(id(), "A", emoji.repeat(256), HerdAnimalSex.FEMALE, null));
     }
 
     @Test

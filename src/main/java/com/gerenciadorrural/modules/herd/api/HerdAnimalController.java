@@ -1,6 +1,7 @@
 package com.gerenciadorrural.modules.herd.api;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.gerenciadorrural.modules.herd.application.*;
 import com.gerenciadorrural.modules.herd.domain.*;
 import com.gerenciadorrural.modules.organizations.api.ResolvedTenantContext;
@@ -20,5 +21,5 @@ import java.util.*;
  private HerdAnimalQuery query(String search,String sex,String status,String page,String size){try{String normalized=search==null?null:search.trim();if(normalized!=null&&normalized.isEmpty())normalized=null;if(normalized!=null&&normalized.length()>100)throw new HerdAnimalQueryException();int p=page==null?0:Integer.parseInt(page),s=size==null?50:Integer.parseInt(size);if(p<0||s<1||s>100)throw new HerdAnimalQueryException();long offset=(long)p*s;if(offset>MAX_OFFSET)throw new HerdAnimalQueryException();return new HerdAnimalQuery(normalized,sex==null?null:HerdAnimalSex.valueOf(sex),status==null?null:HerdAnimalStatus.valueOf(status),p,s);}catch(IllegalArgumentException e){throw new HerdAnimalQueryException();}}
  public record Response(List<Item> items,int page,int size,long totalElements,int totalPages){static Response from(HerdAnimalPage p){return new Response(p.items().stream().map(Item::from).toList(),p.page(),p.size(),p.totalElements(),p.totalPages());}}
  public record Item(String id,String identification,String name,String sex,LocalDate birthDate,String status,long version){static Item from(HerdAnimalSummary a){return new Item(a.id().toString(),a.identification(),a.name(),a.sex().name(),a.birthDate(),a.status().name(),a.version());}}
- @JsonIgnoreProperties(ignoreUnknown=false) public record CreateRequest(UUID id,String identification,String name,HerdAnimalSex sex,LocalDate birthDate){}
+ @JsonIgnoreProperties(ignoreUnknown=false) @JsonDeserialize(using=HerdAnimalCreateRequestDeserializer.class) public record CreateRequest(UUID id,String identification,String name,HerdAnimalSex sex,LocalDate birthDate){}
 }

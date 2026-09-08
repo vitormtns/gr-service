@@ -497,6 +497,45 @@ class HerdAnimalVerticalIntegrationTest extends SpringPostgresTestSupport {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1));
     }
 
+    @Test
+    void enforcesTheStrictCreateContractWithTheApplicationConfiguredObjectMapper() throws Exception {
+        String bearerToken = "Bearer " + token();
+        UUID validId = UUID.randomUUID();
+        var request = post("/api/v1/herd/animals")
+                .contentType("application/json")
+                .header(HttpHeaders.AUTHORIZATION, bearerToken)
+                .header("X-Organization-Id", tenantAId)
+                .header("X-Farm-Id", farmA1Id);
+
+        mvc.perform(request.content("{\"id\":\"" + validId + "\",\"identification\":\"STRICT-OK\",\"sex\":\"MALE\"}"))
+                .andExpect(status().isCreated());
+
+        for (String forbiddenField : new String[]{"foo", "tenantId", "farmId", "status", "version", "createdAt", "updatedAt"}) {
+            String body = "{\"id\":\"" + UUID.randomUUID() + "\",\"identification\":\"STRICT-" + forbiddenField
+                    + "\",\"sex\":\"MALE\",\"" + forbiddenField + "\":\"forbidden\"}";
+            mvc.perform(request.content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("HERD_COMMAND_INVALID"));
+        }
+    }
+
+    @Test
+    void rejectsPostgresNulCharactersBeforePersistenceThroughTheRealHttpFlow() throws Exception {
+        var request = post("/api/v1/herd/animals")
+                .contentType("application/json")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token())
+                .header("X-Organization-Id", tenantAId)
+                .header("X-Farm-Id", farmA1Id);
+
+        for (String field : new String[]{"identification", "name"}) {
+            String body = "{\"id\":\"" + UUID.randomUUID() + "\",\"identification\":\"NUL-ID\",\"name\":\"NUL-NAME\",\"sex\":\"MALE\"}"
+                    .replace(field.equals("identification") ? "NUL-ID" : "NUL-NAME", "NUL\\u0000VALUE");
+            mvc.perform(request.content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("HERD_COMMAND_INVALID"));
+        }
+    }
+
     private String token() throws Exception {
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
             .issuer(ISSUER)
