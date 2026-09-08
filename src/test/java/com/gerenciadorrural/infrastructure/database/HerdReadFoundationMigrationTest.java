@@ -78,7 +78,7 @@ class HerdReadFoundationMigrationTest extends PostgresMigrationTestSupport {
              ResultSet result = privileges.executeQuery()) {
             result.next();
             assertThat(result.getBoolean(1)).isTrue();
-            assertThat(result.getBoolean(2)).isFalse();
+            assertThat(result.getBoolean(2)).isTrue();
             assertThat(result.getBoolean(3)).isFalse();
             assertThat(result.getBoolean(4)).isFalse();
             assertThat(result.getBoolean(5)).isFalse();

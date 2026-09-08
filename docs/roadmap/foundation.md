@@ -1,30 +1,28 @@
 # Roadmap da fundação
 
-## Concluído nesta etapa
+## Fundações concluídas
 
-- Spring Boot com Java 21, Maven Wrapper, Actuator e Validation;
-- estrutura de monólito modular e testes ArchUnit;
-- contratos mínimos de command/query, evento de domínio e tenancy;
-- request ID, correlation ID e convenção de erro de validação;
-- perfis local e teste, CI e scripts de verificação;
-- configuração versionada do Supabase local, sem migrations ornamentais;
-- schema privado `app` com usuários, organizações, fazendas, memberships e escopos por fazenda;
-- constraints compostas multi-tenant, role `app_api`, contexto transacional e RLS;
-- migrations reais validadas em PostgreSQL 15 com Testcontainers;
-- decisões arquiteturais documentadas;
-- Spring Security Resource Server com validação JWT em modos explícitos JWKS e HMAC;
-- identidade imutável da requisição e endpoint protegido `GET /api/v1/me`;
-- erros JSON para 401/403 e user ID seguro no contexto de logs.
-- `DataSource` Hikari e persistência JDBC explícita no schema privado;
-- sincronização idempotente e concorrente de `sub` com `app.users`;
-- locking otimista, estados internos bloqueados e resposta persistida de `GET /api/v1/me`.
+- Spring Boot com Java 21, Maven Wrapper, Actuator, Validation, scripts locais e CI;
+- monólito modular, limites validados por ArchUnit e CQRS lógico no mesmo processo;
+- schema privado `app`, migrations versionadas pelo Supabase CLI e validação em PostgreSQL 15 com Testcontainers;
+- autenticação JWT do Supabase, identidade interna idempotente e persistência JDBC explícita;
+- modelo de organizações, memberships, escopo de fazendas, resolução opt-in de `TenantContext` e transação tenant-aware;
+- role `app_api`, RLS, grants mínimos e filtros explícitos por tenant/fazenda;
+- leitura e atualização concorrente do perfil da fazenda atual;
+- Fase 05A — Herd Read Foundation: migration `app.animals`, listagem paginada de animais, filtros, isolamento multi-tenant, RLS, concorrência e smoke local.
 
-## Próxima etapa
+## Próxima fase
 
-Ler memberships, resolver e validar organização e fazenda ativas, criar o contexto multi-tenant, propagá-lo transacionalmente ao PostgreSQL e implementar autorização por escopo de fazenda.
+### 05B — Herd Animal Creation
 
-Antes de codificar, detalhe os limites entre identidade, organização e fazenda e defina como permissões e seleção de fazenda serão validadas. Não implemente rebanho, reprodução, sanidade ou assinaturas junto dessa etapa.
+Implementar exclusivamente a criação idempotente de animal na fazenda autorizada pelo `TenantContext`, por meio do futuro `POST /api/v1/herd/animals`.
 
-## Etapas posteriores, condicionadas a casos reais
+A fase deve definir e validar o comando de criação, UUID fornecido antecipadamente pelo cliente, normalização de dados, conflitos de identificação, idempotência por identidade do recurso, persistência JDBC tenant-aware, `INSERT` mínimo para `app_api`, RLS de escrita, endpoint HTTP, concorrência e smoke local.
 
-Outbox transacional, idempotência persistida, jobs, auditoria, sincronização offline, réplicas, cache e Event Sourcing seletivo. Cada capacidade deve entrar com consumidor, teste e critério operacional claros.
+Ficam fora de escopo: atualização, remoção, consulta por ID, movimentação, reprodução, sanidade, eventos, outbox e auditoria distribuída.
+
+A matriz de autorização da criação está definida para esta capability: `OWNER`, `ADMIN`, `MANAGER` e `OPERATOR` podem criar; `VIEWER` recebe `403 Forbidden`. A regra é aplicada na camada de aplicação antes da persistência e não generaliza capacidades para outros módulos.
+
+## Capacidades posteriores, condicionadas a casos reais
+
+Outbox transacional, eventos de domínio publicados, auditoria de negócio, idempotência para outros comandos, jobs, sincronização offline adicional, réplicas, cache e Event Sourcing seletivo. Cada capacidade deve entrar com consumidor, teste e critério operacional claros.

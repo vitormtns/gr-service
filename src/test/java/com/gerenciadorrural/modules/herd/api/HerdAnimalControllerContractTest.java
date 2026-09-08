@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.gerenciadorrural.modules.herd.application.ListCurrentFarmAnimals;
+import com.gerenciadorrural.modules.herd.application.CreateCurrentFarmAnimal;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalPage;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalQuery;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSex;
@@ -56,15 +57,17 @@ class HerdAnimalControllerContractTest {
     );
 
     private ListCurrentFarmAnimals listCurrentFarmAnimals;
+    private CreateCurrentFarmAnimal createCurrentFarmAnimal;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         listCurrentFarmAnimals = mock(ListCurrentFarmAnimals.class);
+        createCurrentFarmAnimal = mock(CreateCurrentFarmAnimal.class);
         ObjectMapper objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-        mvc = standaloneSetup(new HerdAnimalController(listCurrentFarmAnimals))
+        mvc = standaloneSetup(new HerdAnimalController(listCurrentFarmAnimals, createCurrentFarmAnimal))
             .setControllerAdvice(new HerdAnimalExceptionHandler())
             .setCustomArgumentResolvers(new TenantContextArgumentResolver())
             .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
