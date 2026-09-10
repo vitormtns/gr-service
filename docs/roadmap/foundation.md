@@ -12,10 +12,11 @@
 - Fase 05A — Herd Read Foundation: migration `app.animals`, listagem paginada de animais, filtros, isolamento multi-tenant, RLS, concorrência e smoke local.
 - Fase 05B — Herd Animal Creation: criação idempotente de animal, validação, grants mínimos de INSERT, RLS e concorrência.
 - Fase 05C — Herd Animal Profile & Correction: consulta individual e correção parcial com lock otimista, no-op, grants UPDATE por coluna e RLS.
+- Fase 05D — Herd Lifecycle & Activity Timeline: transições SOLD/DECEASED, timeline operacional append-only, idempotência, concorrência e isolamento por tenant.
 
 ## Próxima fase
 
-As Fases 05A, 05B e 05C já entregam, respectivamente, a listagem do rebanho, a criação de animais e o perfil individual com correção parcial. A vertical atual oferece listagem, criação, `GET` por ID e `PATCH` com lock otimista e no-op; o detalhamento específico permanece no ADR 0020.
+As Fases 05A a 05D entregam listagem, criação idempotente, consulta e correção parcial com lock otimista/no-op, além de transições SOLD/DECEASED e timeline operacional append-only. O detalhamento da timeline e do lifecycle permanece no ADR 0021.
 
 ## Capacidades posteriores, condicionadas a casos reais
 

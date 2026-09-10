@@ -437,8 +437,11 @@ class HerdAnimalCreateConcurrentVerticalIntegrationTest extends SpringPostgresTe
 
     private void deleteAnimals(UUID tenantId, UUID farmId) throws SQLException {
         try (Connection connection = PostgresTestEnvironment.adminConnection();
-             var statement = connection.prepareStatement(
-                     "delete from app.animals where tenant_id = ? and farm_id = ?")) {
+             var eventStatement = connection.prepareStatement("delete from app.animal_events where tenant_id = ? and farm_id = ?");
+             var statement = connection.prepareStatement("delete from app.animals where tenant_id = ? and farm_id = ?")) {
+            eventStatement.setObject(1, tenantId);
+            eventStatement.setObject(2, farmId);
+            eventStatement.executeUpdate();
             statement.setObject(1, tenantId);
             statement.setObject(2, farmId);
             assertThat(statement.executeUpdate()).isEqualTo(1);
