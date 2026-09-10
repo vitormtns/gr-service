@@ -8,20 +8,14 @@
 - autenticação JWT do Supabase, identidade interna idempotente e persistência JDBC explícita;
 - modelo de organizações, memberships, escopo de fazendas, resolução opt-in de `TenantContext` e transação tenant-aware;
 - role `app_api`, RLS, grants mínimos e filtros explícitos por tenant/fazenda;
-- leitura e atualização concorrente do perfil da fazenda atual;
+- leitura e correção concorrente do perfil da fazenda atual com lock otimista e no-op;
 - Fase 05A — Herd Read Foundation: migration `app.animals`, listagem paginada de animais, filtros, isolamento multi-tenant, RLS, concorrência e smoke local.
+- Fase 05B — Herd Animal Creation: criação idempotente de animal, validação, grants mínimos de INSERT, RLS e concorrência.
+- Fase 05C — Herd Animal Profile & Correction: consulta individual e correção parcial com lock otimista, no-op, grants UPDATE por coluna e RLS.
 
 ## Próxima fase
 
-### 05B — Herd Animal Creation
-
-Implementar exclusivamente a criação idempotente de animal na fazenda autorizada pelo `TenantContext`, por meio do futuro `POST /api/v1/herd/animals`.
-
-A fase deve definir e validar o comando de criação, UUID fornecido antecipadamente pelo cliente, normalização de dados, conflitos de identificação, idempotência por identidade do recurso, persistência JDBC tenant-aware, `INSERT` mínimo para `app_api`, RLS de escrita, endpoint HTTP, concorrência e smoke local.
-
-Ficam fora de escopo: atualização, remoção, consulta por ID, movimentação, reprodução, sanidade, eventos, outbox e auditoria distribuída.
-
-A matriz de autorização da criação está definida para esta capability: `OWNER`, `ADMIN`, `MANAGER` e `OPERATOR` podem criar; `VIEWER` recebe `403 Forbidden`. A regra é aplicada na camada de aplicação antes da persistência e não generaliza capacidades para outros módulos.
+As Fases 05A, 05B e 05C já entregam, respectivamente, a listagem do rebanho, a criação de animais e o perfil individual com correção parcial. A vertical atual oferece listagem, criação, `GET` por ID e `PATCH` com lock otimista e no-op; o detalhamento específico permanece no ADR 0020.
 
 ## Capacidades posteriores, condicionadas a casos reais
 

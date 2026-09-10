@@ -54,6 +54,15 @@ class HerdAnimalWritePersistenceMigrationTest extends PostgresMigrationTestSuppo
             result.next();
             assertThat(result.getLong(1)).isZero();
         }
+        try (Connection connection = adminConnection(); PreparedStatement grants = connection.prepareStatement("""
+                select count(*)
+                from information_schema.role_column_grants
+                where table_schema = 'app' and table_name = 'animals'
+                  and grantee = 'PUBLIC' and privilege_type = 'UPDATE'
+                """); ResultSet result = grants.executeQuery()) {
+            result.next();
+            assertThat(result.getLong(1)).isZero();
+        }
 
         try (Connection connection = apiConnection()) {
             assertThat(animalIds(connection)).isEmpty();
@@ -98,6 +107,20 @@ class HerdAnimalWritePersistenceMigrationTest extends PostgresMigrationTestSuppo
             animal(connection, animalB, tenantB, farmB, "B-002");
             assertThat(animalIds(connection)).containsExactly(animalB);
         }
+    }
+
+    @Test
+    void correctionMigrationGrantsOnlyApprovedColumnsAndRlsRestrictsUpdates() throws Exception {
+        UUID tenantA=organization(), tenantB=organization(), farmA=farm(tenantA), farmB=farm(tenantB);
+        UUID animalA=UUID.randomUUID(), animalB=UUID.randomUUID(); animal(animalA,tenantA,farmA,"A-001"); animal(animalB,tenantB,farmB,"B-001");
+        try(Connection c=adminConnection(); PreparedStatement p=c.prepareStatement("""
+            select has_column_privilege('app_api','app.animals',column_name,'UPDATE') from unnest(array['identification','name','sex','birth_date','version','updated_at','id','tenant_id','farm_id','status','created_at']) column_name
+            """); ResultSet r=p.executeQuery()) { boolean[] expected={true,true,true,true,true,true,false,false,false,false,false}; for(boolean value:expected){r.next();assertThat(r.getBoolean(1)).isEqualTo(value);} }
+        try(Connection c=apiConnection()){execute(c,"update app.animals set name='sem tenant' where id=?",animalA);assertThat(animalIds(c)).isEmpty();}
+        try(Connection c=adminConnection();PreparedStatement p=c.prepareStatement("select name,version,tenant_id,farm_id from app.animals where id=?")){p.setObject(1,animalA);ResultSet r=p.executeQuery();assertThat(r.next()).isTrue();assertThat(r.getString(1)).isNull();assertThat(r.getLong(2)).isZero();assertThat(r.getObject(3,UUID.class)).isEqualTo(tenantA);assertThat(r.getObject(4,UUID.class)).isEqualTo(farmA);}
+        try(Connection c=apiConnection()){setTenant(c,tenantA);execute(c,"update app.animals set name='Atualizado', version=version+1, updated_at=current_timestamp where id=?",animalA);execute(c,"update app.animals set name='vazamento' where id=?",animalB);assertThat(animalIds(c)).containsExactly(animalA);}
+        try(Connection c=adminConnection();PreparedStatement p=c.prepareStatement("select name from app.animals where id=?")){p.setObject(1,animalB);ResultSet r=p.executeQuery();r.next();assertThat(r.getString(1)).isNull();}
+        try(Connection c=adminConnection(); Statement s=c.createStatement(); ResultSet r=s.executeQuery("select relrowsecurity,relforcerowsecurity from pg_class where oid='app.animals'::regclass")){r.next();assertThat(r.getBoolean(1)).isTrue();assertThat(r.getBoolean(2)).isTrue();}
     }
 
     private UUID organization() throws SQLException {
