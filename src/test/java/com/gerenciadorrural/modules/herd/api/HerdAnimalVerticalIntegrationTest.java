@@ -31,6 +31,7 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -536,11 +537,128 @@ class HerdAnimalVerticalIntegrationTest extends SpringPostgresTestSupport {
         }
     }
 
+    @Test
+    void readsCorrectsAndRejectsStaleAndStrictProfileCommandsThroughTheRealVertical() throws Exception {
+        UUID id=UUID.randomUUID(); String bearer="Bearer "+token();
+        var headers=post("/api/v1/herd/animals").contentType("application/json").header(HttpHeaders.AUTHORIZATION,bearer).header("X-Organization-Id",tenantAId).header("X-Farm-Id",farmA1Id);
+        mvc.perform(headers.content("{\"id\":\""+id+"\",\"identification\":\"PROFILE-001\",\"name\":\"Brisa\",\"sex\":\"FEMALE\"}"))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.version").value(0));
+        var getProfile=get("/api/v1/herd/animals/"+id).header(HttpHeaders.AUTHORIZATION,bearer).header("X-Organization-Id",tenantAId).header("X-Farm-Id",farmA1Id);
+        mvc.perform(getProfile).andExpect(status().isOk()).andExpect(header().string(HttpHeaders.CACHE_CONTROL,containsString("no-store"))).andExpect(jsonPath("$.name").value("Brisa"));
+        var correct=patch("/api/v1/herd/animals/"+id).contentType("application/json").header(HttpHeaders.AUTHORIZATION,bearer).header("X-Organization-Id",tenantAId).header("X-Farm-Id",farmA1Id);
+        mvc.perform(correct.content("{\"expectedVersion\":0,\"name\":\"Nova Brisa\"}"))
+                .andExpect(status().isOk()).andExpect(header().string(HttpHeaders.CACHE_CONTROL,containsString("no-store"))).andExpect(jsonPath("$.name").value("Nova Brisa")).andExpect(jsonPath("$.version").value(1));
+        mvc.perform(correct.content("{\"expectedVersion\":0,\"name\":\"Nova Brisa\"}"))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("HERD_VERSION_CONFLICT"));
+        mvc.perform(getProfile).andExpect(status().isOk()).andExpect(jsonPath("$.name").value("Nova Brisa")).andExpect(jsonPath("$.version").value(1));
+        for(String body:new String[]{"{\"expectedVersion\":1}","{\"expectedVersion\":1,\"id\":\"x\"}","{\"expectedVersion\":1,\"name\":null,\"name\":\"x\"}","{\"expectedVersion\":1,\"name\":{}}"}) mvc.perform(correct.content(body)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("HERD_COMMAND_INVALID"));
+    }
+
+    @Test
+    void keepsNoOpTimestampAndRejectsStaleNoOpThroughTheRealVertical() throws Exception {
+        UUID id=UUID.randomUUID(); String bearer="Bearer "+token();
+        try(Connection c=PostgresTestEnvironment.adminConnection();var p=c.prepareStatement("insert into app.animals(id,tenant_id,farm_id,identification,name,sex) values(?,?,?,'NOOP-001','Brisa','FEMALE')")){p.setObject(1,id);p.setObject(2,tenantAId);p.setObject(3,farmA1Id);p.executeUpdate();}
+        java.time.OffsetDateTime before;try(Connection c=PostgresTestEnvironment.adminConnection();var p=c.prepareStatement("select updated_at from app.animals where id=?")){p.setObject(1,id);var r=p.executeQuery();r.next();before=r.getObject(1,java.time.OffsetDateTime.class);}
+        var request=patch("/api/v1/herd/animals/"+id).contentType("application/json").header(HttpHeaders.AUTHORIZATION,bearer).header("X-Organization-Id",tenantAId).header("X-Farm-Id",farmA1Id);
+        mvc.perform(request.content("{\"expectedVersion\":0,\"name\":\"  Brisa  \"}")).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(0)).andExpect(jsonPath("$.name").value("Brisa"));
+        try(Connection c=PostgresTestEnvironment.adminConnection();var p=c.prepareStatement("select updated_at from app.animals where id=?")){p.setObject(1,id);var r=p.executeQuery();r.next();assertThat(r.getObject(1,java.time.OffsetDateTime.class)).isEqualTo(before);}
+        mvc.perform(request.content("{\"expectedVersion\":0,\"name\":\"Aurora\"}")).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1));
+        mvc.perform(request.content("{\"expectedVersion\":0,\"name\":\"Aurora\"}")).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("HERD_VERSION_CONFLICT"));
+        mvc.perform(request.content("{\"expectedVersion\":1,\"name\":null}")).andExpect(status().isOk()).andExpect(jsonPath("$.name").value(nullValue())).andExpect(jsonPath("$.version").value(2));
+    }
+
+    @Test
+    void preservesAbsentFieldsClearsBirthDateAndRejectsCompleteStrictBoundary() throws Exception {
+        UUID id=UUID.randomUUID();String bearer="Bearer "+token();try(Connection c=PostgresTestEnvironment.adminConnection();var p=c.prepareStatement("insert into app.animals(id,tenant_id,farm_id,identification,name,sex,birth_date) values(?,?,?,'EDGE-001','Brisa','FEMALE','2020-01-02')")){p.setObject(1,id);p.setObject(2,tenantAId);p.setObject(3,farmA1Id);p.executeUpdate();}
+        var request=patch("/api/v1/herd/animals/"+id).contentType("application/json").header(HttpHeaders.AUTHORIZATION,bearer).header("X-Organization-Id",tenantAId).header("X-Farm-Id",farmA1Id);
+        mvc.perform(request.content("{\"expectedVersion\":0,\"sex\":\"MALE\"}")).andExpect(status().isOk()).andExpect(jsonPath("$.name").value("Brisa")).andExpect(jsonPath("$.birthDate").value("2020-01-02")).andExpect(jsonPath("$.version").value(1));
+        mvc.perform(request.content("{\"expectedVersion\":1,\"birthDate\":null}")).andExpect(status().isOk()).andExpect(jsonPath("$.birthDate").value(nullValue())).andExpect(jsonPath("$.version").value(2));
+        for(String body:new String[]{"{\"expectedVersion\":2}","{\"expectedVersion\":2,\"identification\":null}","{\"expectedVersion\":2,\"sex\":null}","{\"expectedVersion\":2,\"foo\":1}","{\"expectedVersion\":2,\"tenantId\":\"x\"}","{\"expectedVersion\":2,\"Name\":\"x\"}","{\"expectedVersion\":2,\"name\":[\"x\"]}"}) mvc.perform(request.content(body)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("HERD_COMMAND_INVALID"));
+        UUID missing=UUID.randomUUID();var absent=get("/api/v1/herd/animals/"+missing).header(HttpHeaders.AUTHORIZATION,bearer).header("X-Organization-Id",tenantAId).header("X-Farm-Id",farmA1Id);mvc.perform(absent).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("HERD_ANIMAL_NOT_FOUND"));mvc.perform(patch("/api/v1/herd/animals/"+missing).contentType("application/json").content("{\"expectedVersion\":0,\"name\":\"x\"}").header(HttpHeaders.AUTHORIZATION,bearer).header("X-Organization-Id",tenantAId).header("X-Farm-Id",farmA1Id)).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("HERD_ANIMAL_NOT_FOUND"));
+    }
+
+    @Test
+    void enforcesProfileCorrectionAuthorizationIsolationAndConflictPrecedence() throws Exception {
+        UUID animalB = UUID.randomUUID();
+        UUID animalA = UUID.randomUUID();
+        try (Connection connection = PostgresTestEnvironment.adminConnection();
+             var statement = connection.prepareStatement("""
+                 insert into app.animals (id, tenant_id, farm_id, identification, name, sex)
+                 values (?, ?, ?, 'B-NEW', 'Brisa', 'FEMALE'), (?, ?, ?, 'A-NEW', 'Aurora', 'FEMALE')
+                 """)) {
+            statement.setObject(1, animalB); statement.setObject(2, tenantAId); statement.setObject(3, farmA1Id);
+            statement.setObject(4, animalA); statement.setObject(5, tenantAId); statement.setObject(6, farmA1Id);
+            statement.executeUpdate();
+        }
+        String owner = "Bearer " + token();
+        var profile = get("/api/v1/herd/animals/" + animalB).header(HttpHeaders.AUTHORIZATION, owner)
+            .header("X-Organization-Id", tenantAId).header("X-Farm-Id", farmA1Id);
+        var correction = patch("/api/v1/herd/animals/" + animalB).contentType("application/json")
+            .header(HttpHeaders.AUTHORIZATION, owner).header("X-Organization-Id", tenantAId).header("X-Farm-Id", farmA1Id);
+
+        UUID viewer = addMembership(tenantAId, farmA1Id, "VIEWER");
+        String viewerToken = "Bearer " + token(viewer);
+        mvc.perform(get("/api/v1/herd/animals/" + animalB).header(HttpHeaders.AUTHORIZATION, viewerToken)
+                .header("X-Organization-Id", tenantAId).header("X-Farm-Id", farmA1Id))
+            .andExpect(status().isOk()).andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")));
+        mvc.perform(patch("/api/v1/herd/animals/" + animalB).contentType("application/json")
+                .content("{\"expectedVersion\":0,\"name\":\"Bloqueado\"}").header(HttpHeaders.AUTHORIZATION, viewerToken)
+                .header("X-Organization-Id", tenantAId).header("X-Farm-Id", farmA1Id))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("HERD_CORRECTION_FORBIDDEN"));
+        assertAnimal(animalB, "B-NEW", "Brisa", 0);
+
+        UUID otherUser = addMembership(tenantBId, farmB1Id, "OWNER");
+        String other = "Bearer " + token(otherUser);
+        for (var request : java.util.List.of(
+            get("/api/v1/herd/animals/" + animalB).header(HttpHeaders.AUTHORIZATION, other).header("X-Organization-Id", tenantBId).header("X-Farm-Id", farmB1Id),
+            patch("/api/v1/herd/animals/" + animalB).contentType("application/json").content("{\"expectedVersion\":0,\"name\":\"x\"}").header(HttpHeaders.AUTHORIZATION, other).header("X-Organization-Id", tenantBId).header("X-Farm-Id", farmB1Id)
+        )) mvc.perform(request).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("HERD_ANIMAL_NOT_FOUND"))
+            .andExpect(content().string(not(containsString("B-NEW"))));
+
+        addFarmScope(farmA2Id);
+        for (var request : java.util.List.of(
+            get("/api/v1/herd/animals/" + animalB).header(HttpHeaders.AUTHORIZATION, owner).header("X-Organization-Id", tenantAId).header("X-Farm-Id", farmA2Id),
+            patch("/api/v1/herd/animals/" + animalB).contentType("application/json").content("{\"expectedVersion\":0,\"name\":\"x\"}").header(HttpHeaders.AUTHORIZATION, owner).header("X-Organization-Id", tenantAId).header("X-Farm-Id", farmA2Id)
+        )) mvc.perform(request).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("HERD_ANIMAL_NOT_FOUND"))
+            .andExpect(content().string(not(containsString("B-NEW"))));
+
+        mvc.perform(correction.content("{\"expectedVersion\":0,\"identification\":\" \\tA-NEW\\r\\n\"}"))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("HERD_IDENTIFICATION_CONFLICT"));
+        assertAnimal(animalB, "B-NEW", "Brisa", 0);
+        mvc.perform(correction.content("{\"expectedVersion\":0,\"name\":\"Brisa 1\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1));
+        mvc.perform(correction.content("{\"expectedVersion\":0,\"identification\":\"A-NEW\"}"))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("HERD_VERSION_CONFLICT"));
+        assertAnimal(animalB, "B-NEW", "Brisa 1", 1);
+    }
+
+    private UUID addMembership(UUID tenantId, UUID farmId, String role) throws Exception {
+        UUID id = UUID.randomUUID(), membership = UUID.randomUUID();
+        try (Connection connection = PostgresTestEnvironment.adminConnection(); var s = connection.prepareStatement("""
+            insert into app.users (id, status) values (?, 'ACTIVE');
+            insert into app.organization_memberships (id, tenant_id, user_id, role_key, status, farm_scope_mode) values (?, ?, ?, ?, 'ACTIVE', 'SELECTED_FARMS');
+            insert into app.membership_farm_scopes (tenant_id, membership_id, farm_id) values (?, ?, ?)
+            """)) { s.setObject(1,id); s.setObject(2,membership); s.setObject(3,tenantId); s.setObject(4,id); s.setString(5,role); s.setObject(6,tenantId); s.setObject(7,membership); s.setObject(8,farmId); s.executeUpdate(); }
+        return id;
+    }
+
+    private void addFarmScope(UUID farmId) throws Exception {
+        try (Connection connection = PostgresTestEnvironment.adminConnection(); var s = connection.prepareStatement("select id from app.organization_memberships where tenant_id=? and user_id=?")) { s.setObject(1,tenantAId);s.setObject(2,userId);var r=s.executeQuery();r.next();UUID membership=r.getObject(1,UUID.class);try(var insert=connection.prepareStatement("insert into app.membership_farm_scopes (tenant_id,membership_id,farm_id) values (?,?,?)")){insert.setObject(1,tenantAId);insert.setObject(2,membership);insert.setObject(3,farmId);insert.executeUpdate();} }
+    }
+
+    private void assertAnimal(UUID id, String identification, String name, long version) throws Exception {
+        try (Connection connection = PostgresTestEnvironment.adminConnection(); var s = connection.prepareStatement("select identification,name,version from app.animals where id=?")) { s.setObject(1,id);var r=s.executeQuery();assertThat(r.next()).isTrue();assertThat(r.getString(1)).isEqualTo(identification);assertThat(r.getString(2)).isEqualTo(name);assertThat(r.getLong(3)).isEqualTo(version); }
+    }
+
     private String token() throws Exception {
+        return token(userId);
+    }
+
+    private String token(UUID subject) throws Exception {
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
             .issuer(ISSUER)
             .audience(AUDIENCE)
-            .subject(userId.toString())
+            .subject(subject.toString())
             .claim("role", "authenticated")
             .issueTime(new Date())
             .expirationTime(Date.from(Instant.now().plusSeconds(300)))
