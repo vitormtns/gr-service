@@ -5,14 +5,19 @@ import com.gerenciadorrural.modules.herd.domain.HerdAnimalInsertResult;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalWriteConflictException;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalWriteRepository;
 import com.gerenciadorrural.modules.herd.domain.NewHerdAnimal;
+import com.gerenciadorrural.modules.herd.domain.AnimalEventRepository;
+import com.gerenciadorrural.modules.herd.domain.AnimalEventType;
+import com.gerenciadorrural.modules.herd.domain.AnimalEventDetails;
+import com.gerenciadorrural.modules.herd.domain.CreatedEventDetails;
 import com.gerenciadorrural.shared.tenancy.TenantContext;
 import com.gerenciadorrural.shared.tenancy.TenantTransactionExecutor;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Service; import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 @Service
 public class CreateCurrentFarmAnimal {
@@ -22,37 +27,43 @@ public class CreateCurrentFarmAnimal {
     private final TenantTransactionExecutor transactions;
     private final HerdAnimalWriteRepository repository;
     private final Clock clock;
+    private final AnimalEventRepository events;
 
+    @Autowired
     public CreateCurrentFarmAnimal(
             TenantTransactionExecutor transactions,
             HerdAnimalWriteRepository repository,
-            Clock clock
+            Clock clock, AnimalEventRepository events
     ) {
         this.transactions = Objects.requireNonNull(transactions);
         this.repository = Objects.requireNonNull(repository);
         this.clock = Objects.requireNonNull(clock);
+        this.events = Objects.requireNonNull(events);
     }
 
     public CreateCurrentFarmAnimalResult execute(TenantContext context, CreateCurrentFarmAnimalCommand command) {
         Objects.requireNonNull(context, "O contexto de tenant é obrigatório");
         authorize(context);
         NewHerdAnimal animal = normalized(command, context);
-        return transactions.execute(context, () -> createOrReplay(animal));
+        return transactions.execute(context, () -> createOrReplay(animal, context.userId()));
     }
 
-    private CreateCurrentFarmAnimalResult createOrReplay(NewHerdAnimal proposed) {
+    private CreateCurrentFarmAnimalResult createOrReplay(NewHerdAnimal proposed, UUID actorUserId) {
         return repository.findById(proposed.tenantId(), proposed.farmId(), proposed.id())
                 .map(existing -> replay(existing, proposed))
-                .orElseGet(() -> insert(proposed));
+                .orElseGet(() -> insert(proposed, actorUserId));
     }
 
-    private CreateCurrentFarmAnimalResult insert(NewHerdAnimal proposed) {
+    private CreateCurrentFarmAnimalResult insert(NewHerdAnimal proposed, UUID actorUserId) {
         try {
             HerdAnimalInsertResult result = repository.insert(proposed);
             if (result.outcome() == HerdAnimalInsertResult.Outcome.INSERTED) {
+                HerdAnimalSummary animal=result.animal().orElseThrow();
+                events.record(proposed.tenantId(), proposed.farmId(), animal.id(), AnimalEventType.CREATED, null,
+                        actorUserId, null, 0, new CreatedEventDetails(animal.identification(), animal.name(), animal.sex().name(), animal.birthDate()));
                 return new CreateCurrentFarmAnimalResult(
                         CreateCurrentFarmAnimalResult.Outcome.CREATED,
-                        result.animal().orElseThrow()
+                        animal
                 );
             }
             return repository.findById(proposed.tenantId(), proposed.farmId(), proposed.id())
@@ -65,6 +76,9 @@ public class CreateCurrentFarmAnimal {
             throw conflict;
         }
     }
+    public CreateCurrentFarmAnimal(TenantTransactionExecutor transactions,HerdAnimalWriteRepository repository,Clock clock){this(transactions,repository,clock,new NoopEvents());}
+
+    private static final class NoopEvents implements AnimalEventRepository { public void record(com.gerenciadorrural.shared.tenancy.TenantId t,UUID f,UUID a,AnimalEventType y,UUID o,UUID u,LocalDate d,long v,AnimalEventDetails p){} public java.util.Optional<com.gerenciadorrural.modules.herd.domain.AnimalEvent> findByOperation(com.gerenciadorrural.shared.tenancy.TenantId t,UUID f,UUID o){return java.util.Optional.empty();} public java.util.List<com.gerenciadorrural.modules.herd.domain.AnimalEvent> history(com.gerenciadorrural.shared.tenancy.TenantId t,UUID f,UUID a,AnimalEventType y,int s,long z){return java.util.List.of();} public long count(com.gerenciadorrural.shared.tenancy.TenantId t,UUID f,UUID a,AnimalEventType y){return 0;} public void lockOperation(com.gerenciadorrural.shared.tenancy.TenantId t,UUID f,UUID o){} }
 
     private CreateCurrentFarmAnimalResult replay(HerdAnimalSummary existing, NewHerdAnimal proposed) {
         if (!sameCreationPayload(existing, proposed)) {

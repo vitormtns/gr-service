@@ -24,4 +24,5 @@ public interface HerdAnimalProfileRepository {
             HerdAnimalSex sex,
             LocalDate birthDate
     );
+    default Optional<HerdAnimalSummary> updateStatus(TenantId tenantId, UUID farmId, UUID id, long expectedVersion, HerdAnimalStatus status) { throw new UnsupportedOperationException(); }
 }

@@ -38,6 +38,7 @@ class IdentityTenancyMigrationTest extends PostgresMigrationTestSupport {
                         "organizations",
                         "farms",
                         "animals",
+                        "animal_events",
                         "organization_memberships",
                         "membership_farm_scopes"
                 );
@@ -75,6 +76,7 @@ class IdentityTenancyMigrationTest extends PostgresMigrationTestSupport {
                         "organizations",
                         "farms",
                         "animals",
+                        "animal_events",
                         "organization_memberships",
                         "membership_farm_scopes"
                 );
