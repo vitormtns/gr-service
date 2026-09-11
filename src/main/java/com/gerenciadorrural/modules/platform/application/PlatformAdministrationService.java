@@ -1,0 +1,46 @@
+package com.gerenciadorrural.modules.platform.application;
+
+import com.gerenciadorrural.modules.identity.application.SynchronizeAuthenticatedUser;
+import com.gerenciadorrural.modules.platform.domain.PlatformAdministrationRepository;
+import com.gerenciadorrural.shared.security.application.CurrentUserProvider;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.*;
+
+@Service
+public class PlatformAdministrationService {
+ private final PlatformAdministrationRepository repository; private final CurrentUserProvider users; private final SynchronizeAuthenticatedUser sync; private final Clock clock; private final SecureRandom random=new SecureRandom();
+ public PlatformAdministrationService(PlatformAdministrationRepository repository,CurrentUserProvider users,SynchronizeAuthenticatedUser sync,Clock clock){this.repository=repository;this.users=users;this.sync=sync;this.clock=clock;}
+ private UUID actor(){var u=users.currentUser().orElseThrow(()->new PlatformException("PLATFORM_FORBIDDEN",403,"Identidade autenticada indisponível"));sync.execute(u);return u.userId();}
+ @Transactional public PlatformAdministrationRepository.Organization createOrganization(UUID id,String name){return repository.createOrganization(actor(),id,name);}
+ @Transactional public PlatformAdministrationRepository.Organization organization(UUID o){UUID a=actor();requireMember(a,o);return repository.organization(a,o).orElseThrow(()->notFound("PLATFORM_ORGANIZATION_NOT_FOUND"));}
+ @Transactional public PlatformAdministrationRepository.Organization updateOrganization(UUID o,String name,String status,long version){UUID a=actor();requireOwner(a,o);if(status!=null&&!Set.of("ACTIVE","SUSPENDED","ARCHIVED").contains(status))throw new PlatformException("PLATFORM_COMMAND_INVALID",400,"Status da organization inválido");var current=repository.organization(a,o).orElseThrow(()->notFound("PLATFORM_ORGANIZATION_NOT_FOUND"));if(current.version()!=version)throw new PlatformException("PLATFORM_VERSION_CONFLICT",409,"Versão da organization desatualizada");return repository.updateOrganization(a,o,name,status,version).orElse(current);}
+ @Transactional public List<PlatformAdministrationRepository.Farm> farms(UUID o){UUID a=actor();requireMember(a,o);return repository.farms(a,o);}
+ @Transactional public PlatformAdministrationRepository.Farm farm(UUID o,UUID f){UUID a=actor();requireMember(a,o);return repository.farm(a,o,f).orElseThrow(()->notFound("PLATFORM_FARM_NOT_FOUND"));}
+ @Transactional public PlatformAdministrationRepository.Farm createFarm(UUID o,UUID id,String name){UUID a=actor();requireAdmin(a,o);return repository.createFarm(a,o,id,name);}
+ @Transactional public PlatformAdministrationRepository.Farm updateFarm(UUID o,UUID f,String n,String s,long v){UUID a=actor();requireAdmin(a,o);if(s!=null&&!Set.of("ACTIVE","INACTIVE","ARCHIVED").contains(s))throw new PlatformException("PLATFORM_COMMAND_INVALID",400,"Status da fazenda inválido");var current=repository.farm(a,o,f).orElseThrow(()->notFound("PLATFORM_FARM_NOT_FOUND"));if(current.version()!=v)throw new PlatformException("PLATFORM_VERSION_CONFLICT",409,"Versão da fazenda desatualizada");return repository.updateFarm(a,o,f,n,s,v).orElse(current);}
+ @Transactional public List<PlatformAdministrationRepository.Member> members(UUID o,int page,int size){UUID a=actor();requireMember(a,o);return repository.members(a,o,page*size,size);}
+ @Transactional public PlatformAdministrationRepository.Member addMember(UUID o,UUID userId,String role,String scope,List<UUID> farms){UUID a=actor();var admin=requireAdmin(a,o);validateRole(role);authorizeManagement(admin,"VIEWER",role);validateScope(a,o,scope,farms);return repository.addMember(a,o,userId,role,scope,farms).orElseThrow(()->conflict("Usuário indisponível ou já associado à organization"));}
+ @Transactional public PlatformAdministrationRepository.Member updateMember(UUID o,UUID id,String role,String scope,List<UUID> farms,long v){UUID a=actor();var admin=requireAdmin(a,o);if(role!=null)validateRole(role);var target=repository.member(a,o,id).orElseThrow(()->notFound("PLATFORM_MEMBERSHIP_NOT_FOUND"));if(target.version()!=v)throw new PlatformException("PLATFORM_VERSION_CONFLICT",409,"Versão da associação desatualizada");authorizeManagement(admin,target.role(),role);if("OWNER".equals(target.role())&&!"OWNER".equals(role)&&owners(a,o)<=1)throw conflict("Não é permitido remover o último proprietário");validateScope(a,o,scope,farms);return repository.updateMember(a,o,id,role,scope,farms,v).orElse(target);}
+ @Transactional public void revokeMember(UUID o,UUID id){UUID a=actor();var admin=requireAdmin(a,o);var target=repository.member(a,o,id).orElseThrow(()->notFound("PLATFORM_MEMBERSHIP_NOT_FOUND"));authorizeManagement(admin,target.role(),null);if("OWNER".equals(target.role())&&owners(a,o)<=1)throw conflict("Não é permitido revogar o último proprietário");if(!repository.revokeMember(a,o,id))throw notFound("PLATFORM_MEMBERSHIP_NOT_FOUND");}
+ @Transactional public InvitationResult invite(UUID o,String email,String role,String scope,List<UUID> farms){UUID a=actor();var admin=requireAdmin(a,o);validateRole(role);authorizeManagement(admin,"VIEWER",role);validateScope(a,o,scope,farms);byte[] bytes=new byte[32];random.nextBytes(bytes);String token=Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);var invitation=repository.createInvitation(a,o,email.trim().toLowerCase(Locale.ROOT),role,scope,farms,sha256(token),clock.instant().plus(Duration.ofDays(7)));return new InvitationResult(invitation,token);}
+ @Transactional public List<PlatformAdministrationRepository.Invitation> invitations(UUID o,String status,int page,int size){UUID a=actor();requireAdmin(a,o);return repository.invitations(a,o,status,page*size,size);}
+ @Transactional public void revokeInvitation(UUID o,UUID id){UUID a=actor();requireAdmin(a,o);if(!repository.revokeInvitation(a,o,id))throw notFound("PLATFORM_INVITATION_NOT_FOUND");}
+ @Transactional public void accept(String token){UUID a=actor();if(!repository.acceptInvitation(a,sha256(token)))throw conflict("Convite inválido, expirado ou já utilizado");}
+ @Transactional public List<PlatformAdministrationRepository.AuditEvent> audit(UUID o,String t,UUID f,int page,int size){UUID a=actor();requireAdmin(a,o);return repository.audit(a,o,t,f,page*size,size);}
+ private PlatformAdministrationRepository.Membership requireMember(UUID a,UUID o){return repository.membership(a,o).orElseThrow(()->notFound("PLATFORM_ORGANIZATION_NOT_FOUND"));}
+ private PlatformAdministrationRepository.Membership requireOwner(UUID a,UUID o){var m=requireMember(a,o);if(!"OWNER".equals(m.role()))throw new PlatformException("PLATFORM_FORBIDDEN",403,"Apenas proprietário pode realizar esta ação");return m;}
+ private PlatformAdministrationRepository.Membership requireAdmin(UUID a,UUID o){var m=requireMember(a,o);if(!Set.of("OWNER","ADMIN").contains(m.role()))throw new PlatformException("PLATFORM_FORBIDDEN",403,"Permissão administrativa necessária");return m;}
+ private void authorizeManagement(PlatformAdministrationRepository.Membership actor,String target,String requested){if("OWNER".equals(actor.role()))return;if("OWNER".equals(target)||"ADMIN".equals(target)||"OWNER".equals(requested)||"ADMIN".equals(requested))throw new PlatformException("PLATFORM_FORBIDDEN",403,"Administrador não pode administrar proprietários ou administradores");}
+ private void validateScope(UUID a,UUID o,String scope,List<UUID> farms){if(scope==null)return;if(!Set.of("ALL_FARMS","SELECTED_FARMS").contains(scope))throw new PlatformException("PLATFORM_COMMAND_INVALID",400,"Escopo de fazenda inválido");if("SELECTED_FARMS".equals(scope)&&farms.isEmpty())throw new PlatformException("PLATFORM_COMMAND_INVALID",400,"Escopo selecionado exige ao menos uma fazenda");if("ALL_FARMS".equals(scope)&&!farms.isEmpty())throw new PlatformException("PLATFORM_COMMAND_INVALID",400,"ALL_FARMS não aceita fazendas selecionadas");for(UUID f:farms)if(repository.farm(a,o,f).filter(x->"ACTIVE".equals(x.status())).isEmpty())throw notFound("PLATFORM_FARM_NOT_FOUND");}
+ private void validateRole(String role){if(!Set.of("OWNER","ADMIN","MANAGER","OPERATOR","VIEWER").contains(role))throw new PlatformException("PLATFORM_COMMAND_INVALID",400,"Papel inválido");}
+ private int owners(UUID a,UUID o){return (int)repository.members(a,o,0,100).stream().filter(m->"ACTIVE".equals(m.status())&&"OWNER".equals(m.role())).count();}
+ private static String sha256(String input){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(input.getBytes(StandardCharsets.UTF_8)));}catch(Exception e){throw new IllegalStateException(e);}}
+ private static PlatformException notFound(String code){return new PlatformException(code,404,"Recurso administrativo não encontrado");} private static PlatformException conflict(String message){return new PlatformException("PLATFORM_MEMBERSHIP_CONFLICT",409,message);}
+ public record InvitationResult(PlatformAdministrationRepository.Invitation invitation,String token){}
+}
