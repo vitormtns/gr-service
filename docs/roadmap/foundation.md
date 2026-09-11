@@ -25,3 +25,4 @@ As Fases 05A a 05D entregam listagem, criação idempotente, consulta e correç�
 ## Capacidades posteriores, condicionadas a casos reais
 
 Outbox transacional, eventos de domínio publicados, auditoria de negócio, idempotência para outros comandos, jobs, sincronização offline adicional, réplicas, cache e Event Sourcing seletivo. Cada capacidade deve entrar com consumidor, teste e critério operacional claros.
+# Fase 05F concluída — transferência de rebanho entre fazendas e cadeia de custódia implementadas. O próximo foco volta ao MVP geral fora do aprofundamento de rebanho.
