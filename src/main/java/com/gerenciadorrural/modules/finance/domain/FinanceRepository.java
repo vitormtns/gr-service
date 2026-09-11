@@ -1,3 +1,27 @@
 package com.gerenciadorrural.modules.finance.domain;
-import com.gerenciadorrural.shared.tenancy.TenantId; import java.time.*; import java.util.*; import static com.gerenciadorrural.modules.finance.domain.FinanceModels.*;
-public interface FinanceRepository {Optional<Category> category(TenantId t,UUID id,boolean lock); Category insertCategory(TenantId t,Category x); Category updateCategory(TenantId t,Category x,long version); List<Category> categories(TenantId t); Optional<Entry> entry(TenantId t,UUID f,UUID id,boolean lock); Optional<Entry> entryByOperation(TenantId t,UUID f,UUID op); Entry insertEntry(TenantId t,UUID f,Entry x,UUID user); Entry updateEntry(TenantId t,UUID f,Entry x,long version,UUID user); void event(TenantId t,UUID f,UUID entry,UUID operation,EventType type,UUID actor,LocalDate occurred,Object details); Optional<Event> eventByOperation(TenantId t,UUID f,UUID entry,UUID operation); List<Event> history(TenantId t,UUID f,UUID entry); List<Entry> entries(TenantId t,UUID f,EntryType type,EntryStatus status,UUID category,LocalDate from,LocalDate to,String search,int size,long offset); long count(TenantId t,UUID f,EntryType type,EntryStatus status,UUID category,LocalDate from,LocalDate to,String search); Summary summary(TenantId t,UUID f,UUID category,LocalDate from,LocalDate to,LocalDate today); List<CategoryTotals> categoryTotals(TenantId t,UUID f,LocalDate from,LocalDate to);}
+
+import com.gerenciadorrural.shared.tenancy.TenantId;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import static com.gerenciadorrural.modules.finance.domain.FinanceModels.*;
+
+public interface FinanceRepository {
+ void lockOperation(TenantId tenantId, UUID farmId, UUID operationId);
+ Optional<Category> category(TenantId tenantId, UUID id, boolean lock);
+ Category insertCategory(TenantId tenantId, Category category);
+ Category updateCategory(TenantId tenantId, Category category, long version);
+ List<Category> categories(TenantId tenantId);
+ Optional<Entry> entry(TenantId tenantId, UUID farmId, UUID id, boolean lock);
+ Optional<Entry> entryByOperation(TenantId tenantId, UUID farmId, UUID operationId);
+ Entry insertEntry(TenantId tenantId, UUID farmId, Entry entry, UUID userId);
+ Entry updateEntry(TenantId tenantId, UUID farmId, Entry entry, long version, UUID userId);
+ void event(TenantId tenantId, UUID farmId, UUID entryId, UUID operationId, EventType type, UUID actorId, LocalDate occurredOn, Object details);
+ Optional<Event> eventByOperation(TenantId tenantId, UUID farmId, UUID entryId, UUID operationId);
+ List<Event> history(TenantId tenantId, UUID farmId, UUID entryId);
+ List<Entry> entries(TenantId tenantId, UUID farmId, EntryType type, EntryStatus status, UUID categoryId, LocalDate from, LocalDate to, String search, int size, long offset);
+ long count(TenantId tenantId, UUID farmId, EntryType type, EntryStatus status, UUID categoryId, LocalDate from, LocalDate to, String search);
+ Summary summary(TenantId tenantId, UUID farmId, UUID categoryId, LocalDate from, LocalDate to, LocalDate today);
+ List<CategoryTotals> categoryTotals(TenantId tenantId, UUID farmId, LocalDate from, LocalDate to);
+}
