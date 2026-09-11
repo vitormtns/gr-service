@@ -45,7 +45,12 @@ class IdentityTenancyMigrationTest extends PostgresMigrationTestSupport {
                         "herd_movement_operations",
                         "herd_movements",
                         "animal_transfers",
-                        "herd_transfer_operations"
+                        "herd_transfer_operations",
+                        "inventory_products",
+                        "inventory_locations",
+                        "inventory_balances",
+                        "inventory_operations",
+                        "inventory_movements"
                 );
     }
 
@@ -88,7 +93,12 @@ class IdentityTenancyMigrationTest extends PostgresMigrationTestSupport {
                         "herd_movement_operations",
                         "herd_movements",
                         "animal_transfers",
-                        "herd_transfer_operations"
+                        "herd_transfer_operations",
+                        "inventory_products",
+                        "inventory_locations",
+                        "inventory_balances",
+                        "inventory_operations",
+                        "inventory_movements"
                 );
     }
 

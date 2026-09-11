@@ -58,6 +58,11 @@ abstract class PostgresMigrationTestSupport {
     void clearApplicationData() throws SQLException {
         executeAsAdmin("""
                 truncate table
+                    app.inventory_movements,
+                    app.inventory_operations,
+                    app.inventory_balances,
+                    app.inventory_locations,
+                    app.inventory_products,
                     app.animal_transfers,
                     app.herd_transfer_operations,
                     app.herd_movements,
