@@ -68,6 +68,9 @@ public final class PostgresTestEnvironment {
         try (Connection connection = adminConnection(); Statement statement = connection.createStatement()) {
             statement.execute("""
                     truncate table
+                        app.financial_entry_events,
+                        app.financial_entries,
+                        app.financial_categories,
                         app.inventory_movements,
                         app.inventory_operations,
                         app.inventory_balances,

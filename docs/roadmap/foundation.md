@@ -30,4 +30,4 @@ Outbox transacional, eventos de domínio publicados, auditoria de negócio, idem
 
 ## Próxima fase
 
-Phase 07 — Rural Finance Core.
+Fase 07 concluída — Rural Finance Core: categorias tenant-wide, lançamentos por fazenda, histórico append-only, idempotência, concorrência, rollback transacional, RLS e agregados financeiros.
