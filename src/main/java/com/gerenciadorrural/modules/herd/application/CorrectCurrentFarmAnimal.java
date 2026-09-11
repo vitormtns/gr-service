@@ -40,9 +40,10 @@ public class CorrectCurrentFarmAnimal {
         HerdAnimalSummary target = apply(current, patch);
         if (sameEditableState(current, target)) return current;
         try {
-            HerdAnimalSummary updated=repository.update(context.tenantId(), context.farmId(), id, patch.expectedVersion,
+            HerdAnimalSummary persisted=repository.update(context.tenantId(), context.farmId(), id, patch.expectedVersion,
                     target.identification(), target.name(), target.sex(), target.birthDate())
                     .orElseGet(() -> afterMiss(context, id));
+            HerdAnimalSummary updated=new HerdAnimalSummary(persisted.id(),persisted.identification(),persisted.name(),persisted.sex(),persisted.birthDate(),persisted.status(),persisted.version(),current.paddock());
             events.record(context.tenantId(),context.farmId(),id,AnimalEventType.CORRECTED,null,context.userId(),null,updated.version(),changes(current,updated));
             return updated;
         } catch (HerdAnimalWriteConflictException conflict) {
@@ -82,7 +83,7 @@ public class CorrectCurrentFarmAnimal {
                 new HerdAnimalPatch<>(command.name().present(), name), command.sex(), command.birthDate());
     }
     private static boolean invalid(String value, int max) { return value.isEmpty() || value.indexOf('\0') >= 0 || value.codePointCount(0, value.length()) > max; }
-    private static HerdAnimalSummary apply(HerdAnimalSummary current, ValidPatch patch) { return new HerdAnimalSummary(current.id(), patch.identification.present()?patch.identification.value():current.identification(), patch.name.present()?patch.name.value():current.name(), patch.sex.present()?patch.sex.value():current.sex(), patch.birthDate.present()?patch.birthDate.value():current.birthDate(), current.status(), current.version()); }
+    private static HerdAnimalSummary apply(HerdAnimalSummary current, ValidPatch patch) { return new HerdAnimalSummary(current.id(), patch.identification.present()?patch.identification.value():current.identification(), patch.name.present()?patch.name.value():current.name(), patch.sex.present()?patch.sex.value():current.sex(), patch.birthDate.present()?patch.birthDate.value():current.birthDate(), current.status(), current.version(),current.paddock()); }
     private static boolean sameEditableState(HerdAnimalSummary a, HerdAnimalSummary b) { return a.identification().equals(b.identification()) && Objects.equals(a.name(), b.name()) && a.sex()==b.sex() && Objects.equals(a.birthDate(), b.birthDate()); }
     private static void authorize(TenantContext context) { if (!ALLOWED_ROLES.contains(context.role())) throw new HerdAnimalCorrectionForbiddenException(); }
     private static CorrectedEventDetails changes(HerdAnimalSummary before,HerdAnimalSummary after){java.util.Map<String,FieldChange> changes=new java.util.LinkedHashMap<>(); add(changes,"identification",before.identification(),after.identification());add(changes,"name",before.name(),after.name());add(changes,"sex",before.sex().name(),after.sex().name());add(changes,"birthDate",before.birthDate()==null?null:before.birthDate().toString(),after.birthDate()==null?null:after.birthDate().toString());return new CorrectedEventDetails(changes);}

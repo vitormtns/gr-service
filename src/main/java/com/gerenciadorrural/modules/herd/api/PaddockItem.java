@@ -1,0 +1,1 @@
+package com.gerenciadorrural.modules.herd.api; import com.gerenciadorrural.modules.herd.domain.PaddockSummary; public record PaddockItem(String id,String name,String code,String status,long version){public static PaddockItem from(PaddockSummary p){return p==null?null:new PaddockItem(p.id().toString(),p.name(),p.code(),p.status().name(),p.version());}}

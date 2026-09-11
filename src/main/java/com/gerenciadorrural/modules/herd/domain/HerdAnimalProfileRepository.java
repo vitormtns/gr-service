@@ -25,4 +25,5 @@ public interface HerdAnimalProfileRepository {
             LocalDate birthDate
     );
     default Optional<HerdAnimalSummary> updateStatus(TenantId tenantId, UUID farmId, UUID id, long expectedVersion, HerdAnimalStatus status) { throw new UnsupportedOperationException(); }
+    default Optional<HerdAnimalSummary> updatePaddock(TenantId tenantId, UUID farmId, UUID id, long expectedVersion, UUID paddockId) { throw new UnsupportedOperationException(); }
 }
