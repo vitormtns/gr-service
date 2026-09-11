@@ -50,7 +50,10 @@ class IdentityTenancyMigrationTest extends PostgresMigrationTestSupport {
                         "inventory_locations",
                         "inventory_balances",
                         "inventory_operations",
-                        "inventory_movements"
+                        "inventory_movements",
+                        "financial_categories",
+                        "financial_entries",
+                        "financial_entry_events"
                 );
     }
 
@@ -98,7 +101,10 @@ class IdentityTenancyMigrationTest extends PostgresMigrationTestSupport {
                         "inventory_locations",
                         "inventory_balances",
                         "inventory_operations",
-                        "inventory_movements"
+                        "inventory_movements",
+                        "financial_categories",
+                        "financial_entries",
+                        "financial_entry_events"
                 );
     }
 
