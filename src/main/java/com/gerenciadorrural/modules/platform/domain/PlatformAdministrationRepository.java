@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface PlatformAdministrationRepository {
+    void lockOrganizationAdministration(UUID actorId, UUID organizationId);
     Organization createOrganization(UUID actorId, UUID id, String name);
     Optional<Membership> membership(UUID actorId, UUID organizationId);
     Optional<Organization> organization(UUID actorId, UUID organizationId);

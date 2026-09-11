@@ -11,3 +11,7 @@ Invitations guardam apenas SHA-256 de um token aleatório de 256 bits. O token �
 Eventos append-only em `platform_admin_events` fornecem auditoria administrativa. As tabelas novas usam RLS/`FORCE RLS`; o repositório configura explicitamente user e organization no contexto PostgreSQL, sem bypass global. A criação e aceitação, que ainda não possuem contexto de tenant, usam funções `SECURITY DEFINER` estreitas e com privilégios revogados do público.
 
 O Supabase Auth permanece a fronteira de identidade. Billing, SSO/SCIM, grupos, permissões customizadas, e-mail externo, MFA, exclusão física, merge e transferência de organizations estão fora de escopo. Hardening posterior tratará corridas de last-owner e accept, fault injection e auditoria de segurança final.
+
+## Hardening B1
+
+Mutações de membership que podem alterar ownership adquirem `pg_advisory_xact_lock` determinístico por organization antes de reavaliar a invariável de último OWNER. A aceitação também bloqueia o convite por linha e serializa na mesma organization. As funções `SECURITY DEFINER` possuem `search_path = pg_catalog, app`, usam SQL estático e mantêm `PUBLIC` sem `EXECUTE`; somente `app_api` pode invocá-las. O token permanece opaco, case-sensitive e armazenado exclusivamente como SHA-256.
