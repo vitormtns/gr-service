@@ -1,4 +1,4 @@
 package com.gerenciadorrural.modules.herd.domain;
 
-public sealed interface AnimalEventDetails permits CreatedEventDetails, CorrectedEventDetails, LifecycleEventDetails {
+public sealed interface AnimalEventDetails permits CreatedEventDetails, CorrectedEventDetails, LifecycleEventDetails, MovedEventDetails {
 }

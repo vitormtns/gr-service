@@ -27,14 +27,14 @@ class HerdLifecyclePersistenceMigrationTest extends PostgresMigrationTestSupport
         try (Connection connection = adminConnection()) {
             assertThat(columns(connection)).containsExactlyInAnyOrder("id", "tenant_id", "farm_id", "animal_id", "event_type", "operation_id", "actor_user_id", "occurred_on", "recorded_at", "resulting_version", "payload");
             assertThat(primaryKey(connection)).containsExactly("id");
-            assertThat(indexes(connection)).contains("animal_events_pkey", "animal_events_tenant_farm_operation_unique", "animal_events_history_idx");
+            assertThat(indexes(connection)).contains("animal_events_pkey", "animal_events_tenant_farm_operation_animal_unique", "animal_events_history_idx");
             assertThat(compositeForeignKey(connection)).isTrue();
             try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("select relrowsecurity,relforcerowsecurity from pg_class where oid='app.animal_events'::regclass")) { assertThat(result.next()).isTrue(); assertThat(result.getBoolean(1)).isTrue(); assertThat(result.getBoolean(2)).isTrue(); }
         }
         insertEvent(tenant, farmA, animalA, "SOLD", operation, 1, "{\"notes\":\"ok\"}");
         PSQLException duplicate = failure(() -> insertEvent(tenant, farmA, animalA, "SOLD", operation, 2, "{}"));
         assertThat(duplicate.getSQLState()).isEqualTo("23505");
-        assertThat(duplicate.getServerErrorMessage().getConstraint()).isEqualTo("animal_events_tenant_farm_operation_unique");
+        assertThat(duplicate.getServerErrorMessage().getConstraint()).isEqualTo("animal_events_tenant_farm_operation_animal_unique");
         PSQLException mismatch = failure(() -> insertEvent(tenant, farmB, animalA, "CREATED", null, 0, "{}"));
         assertThat(mismatch.getSQLState()).isEqualTo("23503");
         assertThat(mismatch.getServerErrorMessage().getConstraint()).isEqualTo("animal_events_animal_fk");

@@ -1,5 +1,9 @@
 # Roadmap da fundação
 
+## Fase 05E concluída
+
+- Fase 05E — Farm Territory & Herd Movement Core: piquetes, localização atual, movimentação individual e em lote, ocupação, timeline e log operacional com isolamento por tenant/fazenda.
+
 ## Fundações concluídas
 
 - Spring Boot com Java 21, Maven Wrapper, Actuator, Validation, scripts locais e CI;
