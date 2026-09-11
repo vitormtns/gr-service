@@ -43,7 +43,9 @@ class IdentityTenancyMigrationTest extends PostgresMigrationTestSupport {
                         "membership_farm_scopes",
                         "paddocks",
                         "herd_movement_operations",
-                        "herd_movements"
+                        "herd_movements",
+                        "animal_transfers",
+                        "herd_transfer_operations"
                 );
     }
 
@@ -84,7 +86,9 @@ class IdentityTenancyMigrationTest extends PostgresMigrationTestSupport {
                         "membership_farm_scopes",
                         "paddocks",
                         "herd_movement_operations",
-                        "herd_movements"
+                        "herd_movements",
+                        "animal_transfers",
+                        "herd_transfer_operations"
                 );
     }
 
