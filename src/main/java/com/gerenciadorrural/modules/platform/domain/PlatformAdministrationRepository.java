@@ -19,7 +19,7 @@ public interface PlatformAdministrationRepository {
     Optional<Member> addMember(UUID actorId, UUID organizationId, UUID userId, String role, String scopeMode, List<UUID> farmIds);
     Optional<Member> member(UUID actorId, UUID organizationId, UUID membershipId);
     Optional<Member> updateMember(UUID actorId, UUID organizationId, UUID membershipId, String role, String scopeMode, List<UUID> farmIds, long expectedVersion);
-    boolean revokeMember(UUID actorId, UUID organizationId, UUID membershipId);
+    boolean revokeMember(UUID actorId, UUID organizationId, UUID membershipId, long expectedVersion);
     Invitation createInvitation(UUID actorId, UUID organizationId, String email, String role, String scopeMode, List<UUID> farmIds, String tokenHash, Instant expiresAt);
     List<Invitation> invitations(UUID actorId, UUID organizationId, String status, int offset, int size);
     Optional<Invitation> invitationByToken(UUID actorId, String tokenHash);
