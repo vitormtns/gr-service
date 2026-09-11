@@ -15,3 +15,10 @@ O Supabase Auth permanece a fronteira de identidade. Billing, SSO/SCIM, grupos, 
 ## Hardening B1
 
 Mutações de membership que podem alterar ownership adquirem `pg_advisory_xact_lock` determinístico por organization antes de reavaliar a invariável de último OWNER. A aceitação também bloqueia o convite por linha e serializa na mesma organization. As funções `SECURITY DEFINER` possuem `search_path = pg_catalog, app`, usam SQL estático e mantêm `PUBLIC` sem `EXECUTE`; somente `app_api` pode invocá-las. O token permanece opaco, case-sensitive e armazenado exclusivamente como SHA-256.
+## Hardening B2
+
+As mutações administrativas e seus eventos obrigatórios compartilham a mesma transação Spring/JDBC; uma falha de persistência aborta integralmente a mutation. A prova de regressão instala temporariamente um gatilho PostgreSQL que falha ao inserir o evento, valida ausência de farm parcial, de alteração parcial de scopes e de evento residual, remove o gatilho em `finally` após o término da transação e confirma retry válido.
+
+As provas HTTP com PostgreSQL/Testcontainers cobrem same-token acceptance, accept versus revoke, último OWNER, role versus revoke e scope versus revoke. Toda mutation concorrente usa `expectedVersion`, portanto somente um vencedor em uma versão pode persistir evento e scopes. A autorização é consultada no banco em cada request: revogação, remoção de scope e downgrade de papel têm efeito imediato mesmo com o mesmo JWT.
+
+Erros `DataAccessException` do control plane usam o contrato sanitizado `PLATFORM_PERSISTENCE_UNAVAILABLE`; SQL, trigger, schema, hash e token não são devolvidos ao cliente. O ledger `platform_admin_events` é consumido somente como append-only pelo runtime. As validações rejeitam listas de fazendas repetidas e `farmIds` sem `farmScopeMode`, evitando estados semanticamente ambíguos.
