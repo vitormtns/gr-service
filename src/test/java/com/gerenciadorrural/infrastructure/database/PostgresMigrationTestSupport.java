@@ -68,6 +68,8 @@ abstract class PostgresMigrationTestSupport {
                     app.inventory_products,
                     app.animal_transfers,
                     app.herd_transfer_operations,
+                    app.animal_maternal_relations,
+                    app.animal_pregnancies,
                     app.animal_health_treatments,
                     app.animal_weight_measurements,
                     app.herd_management_operations,
