@@ -11,6 +11,7 @@ create table app.animal_pregnancies (
  constraint animal_pregnancies_farm_fk foreign key(tenant_id,farm_id) references app.farms(tenant_id,id),
  constraint animal_pregnancies_mother_fk foreign key(tenant_id,mother_animal_id) references app.animals(tenant_id,id),
  constraint animal_pregnancies_calf_fk foreign key(tenant_id,calf_animal_id) references app.animals(tenant_id,id),
+ constraint animal_pregnancies_tenant_id_unique unique(tenant_id,id),
  constraint animal_pregnancies_service_type_check check(service_type in ('INSEMINATION','NATURAL_SERVICE')),
  constraint animal_pregnancies_status_check check(status in ('POSSIBLE','CONFIRMED','CALVED','TERMINATED')),
  constraint animal_pregnancies_dates_check check(expected_calving_on > service_on and (confirmed_on is null or confirmed_on >= service_on) and (ended_on is null or ended_on >= service_on)),
@@ -25,7 +26,7 @@ create table app.animal_maternal_relations (
  primary key(tenant_id,calf_animal_id), constraint animal_maternal_relations_not_self check(mother_animal_id<>calf_animal_id),
  constraint animal_maternal_relations_mother_fk foreign key(tenant_id,mother_animal_id) references app.animals(tenant_id,id),
  constraint animal_maternal_relations_calf_fk foreign key(tenant_id,calf_animal_id) references app.animals(tenant_id,id),
- constraint animal_maternal_relations_pregnancy_fk foreign key(pregnancy_id) references app.animal_pregnancies(id)
+ constraint animal_maternal_relations_pregnancy_fk foreign key(tenant_id,pregnancy_id) references app.animal_pregnancies(tenant_id,id)
 );
 create index animal_maternal_relations_mother_idx on app.animal_maternal_relations(tenant_id,mother_animal_id,created_at desc);
 revoke all on app.animal_pregnancies,app.animal_maternal_relations from public;
