@@ -3,6 +3,7 @@ import com.gerenciadorrural.shared.tenancy.TenantId; import java.time.LocalDate;
 public interface AnimalEventRepository {
  void record(TenantId tenantId, UUID farmId, UUID animalId, AnimalEventType type, UUID operationId, UUID actorUserId, LocalDate occurredOn, long resultingVersion, AnimalEventDetails details);
  Optional<AnimalEvent> findByOperation(TenantId tenantId, UUID farmId, UUID operationId);
+ default Optional<AnimalEvent> findByOperation(TenantId tenantId, UUID farmId, UUID operationId, AnimalEventType type) { return findByOperation(tenantId,farmId,operationId).filter(event -> event.type()==type); }
  List<AnimalEvent> history(TenantId tenantId, UUID farmId, UUID animalId, AnimalEventType type, int size, long offset);
  long count(TenantId tenantId, UUID farmId, UUID animalId, AnimalEventType type);
  void lockOperation(TenantId tenantId, UUID farmId, UUID operationId);

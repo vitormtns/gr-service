@@ -2,4 +2,12 @@
 
 ## Phase 09A — Foundation, Weight & Health
 
-Em implementação: pesagem e manejo sanitário individual/em lote, timeline tipada, idempotência e controle otimista. Alertas, reprodução e parto permanecem fora desta macroentrega.
+Status: **COMPLETE**.
+
+## Phase 09B — Reprodução, parto e relações maternas
+
+Status: **COMPLETE**. Inclui gestação, confirmação, encerramento, parto transacional, cria inline, relações maternas, leituras protegidas por fazenda e replay idempotente.
+
+## Phase 09C — Alertas e auditoria final da Phase 09
+
+Status: **PENDING**. Trabalho derivado, alertas e endurecimento final da macroentrega ainda não foram iniciados.
