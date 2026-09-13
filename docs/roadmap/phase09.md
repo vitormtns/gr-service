@@ -1,13 +1,17 @@
 # Phase 09 — BovNex Herd Intelligence
 
-## Phase 09A — Foundation, Weight & Health
+## Phase 09A — Fundação, peso e saúde
 
 Status: **COMPLETE**.
 
 ## Phase 09B — Reprodução, parto e relações maternas
 
-Status: **COMPLETE**. Lifecycle de gestação, parto com ou sem gestação, criação da cria, relação materna, idempotência, optimistic locking, concorrência, rollback transacional, autorização, não enumeração, RLS e comportamento após transferências foram endurecidos e verificados.
+Status: **COMPLETE**. O ciclo de vida de gestação, parto com ou sem gestação, criação da cria, relação materna, idempotência, bloqueio otimista, concorrência, rollback transacional, autorização, não enumeração, RLS e comportamento após transferências foram endurecidos e verificados.
 
-## Phase 09C — Alertas e auditoria final da Phase 09
+## Phase 09C — Trabalho pendente derivado e auditoria final
 
-Status: **PENDING**. Trabalho derivado, alertas e endurecimento final da macroentrega ainda não foram iniciados.
+Status: **COMPLETE**. `GET /api/v1/herd/pending-work` calcula o estado derivado sem alertas persistidos, scheduler ou cache. Vacinação e vermifugação usam exclusivamente `nextDueOn` do último tratamento; pesagem usa o limite configurável de 90 dias, inclusivo no corte; e parto usa janela configurável de 14 dias. A leitura usa `Clock`, SQL set-based, paginação determinística e custódia atual da mãe.
+
+## Phase 09 — BovNex Herd Intelligence
+
+Status: **COMPLETE**.

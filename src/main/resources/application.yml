@@ -27,6 +27,9 @@ app:
 herd:
   reproduction:
     default-gestation-days: ${HERD_REPRODUCTION_DEFAULT_GESTATION_DAYS:283}
+  pending-work:
+    weighing-due-days: ${HERD_PENDING_WORK_WEIGHING_DUE_DAYS:90}
+    calving-upcoming-days: ${HERD_PENDING_WORK_CALVING_UPCOMING_DAYS:14}
 
 management:
   endpoints:
