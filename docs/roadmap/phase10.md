@@ -6,7 +6,11 @@ Status: **CONCLUÍDA**.
 
 ## Phase 10B — Relatórios
 
-Status: **PENDENTE**.
+Status: **CONCLUÍDA**.
+
+Entregue: relatórios JSON tipados de posição atual, ciclo de vida, movimentações,
+transferências, pesagens, sanidade, reprodução e planejador, com agregações set-based,
+paginação determinística, isolamento tenant/fazenda e sem efeitos colaterais.
 
 ## Phase 10C — Dashboard e insights
 

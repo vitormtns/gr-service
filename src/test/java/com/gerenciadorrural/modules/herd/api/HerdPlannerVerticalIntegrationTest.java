@@ -150,12 +150,19 @@ class HerdPlannerVerticalIntegrationTest extends SpringPostgresTestSupport {
         assertThat(body(request(farmA, get("/api/v1/herd/planner-items?status=CANCELLED&type=GENERAL"), null))
                 .path("totalElements").asInt()).isOne();
 
+        long factsBeforeReports = reportFactCount();
         for (String role : List.of("OWNER", "ADMIN", "MANAGER", "OPERATOR", "VIEWER")) {
             setRole(role);
             assertStatus(request(farmA, get("/api/v1/herd/planner-items/{id}", item), null), 200);
             assertStatus(request(farmA, get("/api/v1/herd/planner-items"), null), 200);
             assertStatus(request(farmA, get("/api/v1/herd/agenda"), null), 200);
+            for (String report : List.of(
+                    "herd-position", "lifecycle", "movements", "transfers", "weights",
+                    "health", "reproduction", "planner")) {
+                assertStatus(request(farmA, get("/api/v1/herd/reports/" + report), null), 200);
+            }
         }
+        assertThat(reportFactCount()).isEqualTo(factsBeforeReports);
         setRole("VIEWER");
         assertError(request(farmA, post("/api/v1/herd/planner-items"), plannerBody(
                 UUID.randomUUID(), null, "GENERAL", "Sem permissão", null, LocalDate.now(), null)),
@@ -234,7 +241,20 @@ class HerdPlannerVerticalIntegrationTest extends SpringPostgresTestSupport {
                 "/api/v1/herd/agenda?animalId=bad",
                 "/api/v1/herd/agenda?to=bad",
                 "/api/v1/herd/agenda?from=2026-02-01&to=2026-01-01",
-                "/api/v1/herd/agenda?unknown=true"
+                "/api/v1/herd/agenda?unknown=true",
+                "/api/v1/herd/reports/herd-position?page=-1",
+                "/api/v1/herd/reports/herd-position?size=101",
+                "/api/v1/herd/reports/herd-position?sex=female",
+                "/api/v1/herd/reports/lifecycle?event=born",
+                "/api/v1/herd/reports/lifecycle?from=bad",
+                "/api/v1/herd/reports/lifecycle?from=2026-02-01&to=2026-01-01",
+                "/api/v1/herd/reports/movements?sourcePaddockId=bad",
+                "/api/v1/herd/reports/transfers?direction=in",
+                "/api/v1/herd/reports/weights?animalId=bad",
+                "/api/v1/herd/reports/health?treatmentType=vaccination",
+                "/api/v1/herd/reports/reproduction?pregnancyStatus=possible",
+                "/api/v1/herd/reports/planner?status=open",
+                "/api/v1/herd/reports/planner?unknown=true"
         )) {
             assertError(request(farmA, get(path), null), 400, "HERD_QUERY_INVALID");
         }
@@ -366,6 +386,17 @@ class HerdPlannerVerticalIntegrationTest extends SpringPostgresTestSupport {
             resultSet.next();
             return resultSet.getLong(1);
         }
+    }
+
+    private long reportFactCount() throws Exception {
+        return count("app.animals")
+                + count("app.animal_events")
+                + count("app.herd_movements")
+                + count("app.animal_transfers")
+                + count("app.animal_weight_measurements")
+                + count("app.animal_health_treatments")
+                + count("app.animal_pregnancies")
+                + count("app.herd_planner_items");
     }
 
     private static String plannerBody(
