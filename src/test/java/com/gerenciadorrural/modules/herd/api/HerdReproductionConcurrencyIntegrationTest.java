@@ -75,7 +75,7 @@ class HerdReproductionConcurrencyIntegrationTest extends SpringPostgresTestSuppo
                 assertThat(count("select count(*) from app.animal_pregnancies where mother_animal_id=? and status in ('POSSIBLE','CONFIRMED')",mother)).isOne();
                 assertThat(count("select count(*) from app.animal_events where animal_id=? and event_type='BREEDING_RECORDED'",mother)).isOne();
                 assertThat(version(mother)).isEqualTo(1);
-            } finally { executor.shutdown(); assertThat(executor.awaitTermination(10,TimeUnit.SECONDS)).isTrue(); if(!executor.isTerminated())executor.shutdownNow(); }
+            } finally { shutdown(executor); }
         }
     }
 
@@ -87,7 +87,7 @@ class HerdReproductionConcurrencyIntegrationTest extends SpringPostgresTestSuppo
             assertThat(java.util.Set.of(confirm.get(20,TimeUnit.SECONDS),terminate.get(20,TimeUnit.SECONDS))).containsExactlyInAnyOrder(200,409);
             assertThat(count("select count(*) from app.animal_events where animal_id=? and event_type in ('PREGNANCY_CONFIRMED','PREGNANCY_ENDED')",mother)).isOne();
             assertThat(pregnancyStatus(pregnancy)).isIn("CONFIRMED","TERMINATED");
-        } finally { executor.shutdownNow(); assertThat(executor.awaitTermination(10,TimeUnit.SECONDS)).isTrue(); }
+        } finally { shutdown(executor); }
     }
 
     @Test void doubleCalvingReplaysOneOperationAndRejectsDifferentOperations() throws Exception {
@@ -99,7 +99,79 @@ class HerdReproductionConcurrencyIntegrationTest extends SpringPostgresTestSuppo
             assertThat(count("select count(*) from app.animals where id=?",calf)).isOne();
             assertThat(count("select count(*) from app.animal_maternal_relations where calf_animal_id=?",calf)).isOne();
             assertThat(count("select count(*) from app.animal_events where animal_id=? and event_type='CALVED'",mother)).isOne();
-        } finally { executor.shutdownNow(); assertThat(executor.awaitTermination(10,TimeUnit.SECONDS)).isTrue(); }
+        } finally { shutdown(executor); }
+    }
+
+    @Test void calvingAndTerminationHaveExactlyOneWinnerWithoutPartialTimeline() throws Exception {
+        for (int run = 0; run < 5; run++) {
+            UUID mother = createMother();
+            UUID pregnancy = breed(mother);
+            UUID calf = UUID.randomUUID();
+            UUID calvingOperation = UUID.randomUUID();
+            UUID terminationOperation = UUID.randomUUID();
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            ExecutorService executor = Executors.newFixedThreadPool(2);
+            try {
+                Future<Integer> calving = executor.submit(
+                        () -> calve(barrier, mother, pregnancy, calvingOperation, calf));
+                Future<Integer> termination = executor.submit(
+                        () -> transition(barrier, pregnancy, "termination", terminationOperation, "ABORTION"));
+                int calvingStatus = calving.get(20, TimeUnit.SECONDS);
+                int terminationStatus = termination.get(20, TimeUnit.SECONDS);
+                assertThat(java.util.Set.of(calvingStatus, terminationStatus))
+                        .containsExactlyInAnyOrder(409, calvingStatus == 201 ? 201 : 200);
+
+                if (calvingStatus == 201) {
+                    assertThat(pregnancyStatus(pregnancy)).isEqualTo("CALVED");
+                    assertThat(count("select count(*) from app.animals where id=?", calf)).isOne();
+                    assertThat(count("select count(*) from app.animal_maternal_relations where calf_animal_id=?", calf)).isOne();
+                    assertThat(count("select count(*) from app.animal_events where operation_id=?", calvingOperation)).isEqualTo(2);
+                    assertThat(count("select count(*) from app.animal_events where operation_id=?", terminationOperation)).isZero();
+                } else {
+                    assertThat(terminationStatus).isEqualTo(200);
+                    assertThat(pregnancyStatus(pregnancy)).isEqualTo("TERMINATED");
+                    assertThat(count("select count(*) from app.animals where id=?", calf)).isZero();
+                    assertThat(count("select count(*) from app.animal_maternal_relations where calf_animal_id=?", calf)).isZero();
+                    assertThat(count("select count(*) from app.animal_events where operation_id=?", calvingOperation)).isZero();
+                    assertThat(count("select count(*) from app.animal_events where operation_id=?", terminationOperation)).isOne();
+                }
+                assertThat(count("""
+                        select count(*) from app.animal_events
+                        where animal_id=? and event_type in ('CALVED','PREGNANCY_ENDED')
+                        """, mother)).isOne();
+            } finally {
+                shutdown(executor);
+            }
+        }
+    }
+
+    @Test void doubleCalvingWithDifferentOperationsCreatesOnlyOneCalfRelationAndTimeline() throws Exception {
+        for (int run = 0; run < 5; run++) {
+            UUID mother = createMother();
+            UUID pregnancy = breed(mother);
+            UUID firstOperation = UUID.randomUUID();
+            UUID secondOperation = UUID.randomUUID();
+            UUID firstCalf = UUID.randomUUID();
+            UUID secondCalf = UUID.randomUUID();
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            ExecutorService executor = Executors.newFixedThreadPool(2);
+            try {
+                Future<Integer> first = executor.submit(
+                        () -> calve(barrier, mother, pregnancy, firstOperation, firstCalf));
+                Future<Integer> second = executor.submit(
+                        () -> calve(barrier, mother, pregnancy, secondOperation, secondCalf));
+                assertThat(java.util.Set.of(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS)))
+                        .containsExactlyInAnyOrder(201, 409);
+                assertThat(countEither("select count(*) from app.animals where id in (?,?)", firstCalf, secondCalf)).isOne();
+                assertThat(countEither("select count(*) from app.animal_maternal_relations where calf_animal_id in (?,?)", firstCalf, secondCalf)).isOne();
+                assertThat(count("select count(*) from app.animal_events where animal_id=? and event_type='CALVED'", mother)).isOne();
+                assertThat(countEither("select count(*) from app.animal_events where animal_id in (?,?) and event_type='BORN'", firstCalf, secondCalf)).isOne();
+                assertThat(countEither("select count(*) from app.animal_events where operation_id in (?,?) and event_type='CALVED'", firstOperation, secondOperation)).isOne();
+                assertThat(pregnancyStatus(pregnancy)).isEqualTo("CALVED");
+            } finally {
+                shutdown(executor);
+            }
+        }
     }
 
     @Test void breedingAndTransitionsReplayWithoutExtraVersionsOrEvents() throws Exception {
@@ -127,8 +199,10 @@ class HerdReproductionConcurrencyIntegrationTest extends SpringPostgresTestSuppo
     private UUID createMother() throws Exception {UUID id=UUID.randomUUID();assertThat(request(post("/api/v1/herd/animals"),"{\"id\":\""+id+"\",\"identification\":\"M-"+UUID.randomUUID()+"\",\"sex\":\"FEMALE\"}").getResponse().getStatus()).isEqualTo(201);return id;}
     private MvcResult request(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request,String body)throws Exception{return mvc.perform(request.contentType(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION,"Bearer "+token).header("X-Organization-Id",tenant).header("X-Farm-Id",farm).content(body)).andReturn();}
     private long count(String sql,UUID id)throws Exception{try(Connection c=PostgresTestEnvironment.adminConnection();var s=c.prepareStatement(sql)){s.setObject(1,id);ResultSet r=s.executeQuery();r.next();return r.getLong(1);}}
+    private long countEither(String sql,UUID first,UUID second)throws Exception{try(Connection c=PostgresTestEnvironment.adminConnection();var s=c.prepareStatement(sql)){s.setObject(1,first);s.setObject(2,second);ResultSet r=s.executeQuery();r.next();return r.getLong(1);}}
     private long version(UUID id)throws Exception{try(Connection c=PostgresTestEnvironment.adminConnection();var s=c.prepareStatement("select version from app.animals where id=?")){s.setObject(1,id);ResultSet r=s.executeQuery();r.next();return r.getLong(1);}}
     private String pregnancyStatus(UUID id)throws Exception{try(Connection c=PostgresTestEnvironment.adminConnection();var s=c.prepareStatement("select status from app.animal_pregnancies where id=?")){s.setObject(1,id);ResultSet r=s.executeQuery();r.next();return r.getString(1);}}
     private void setRole(String role)throws Exception{try(Connection c=PostgresTestEnvironment.adminConnection();var s=c.prepareStatement("update app.organization_memberships set role_key=? where id=?")){s.setString(1,role);s.setObject(2,membership);s.executeUpdate();}}
+    private static void shutdown(ExecutorService executor)throws Exception{executor.shutdown();if(!executor.awaitTermination(10,TimeUnit.SECONDS)){executor.shutdownNow();assertThat(executor.awaitTermination(10,TimeUnit.SECONDS)).isTrue();}assertThat(executor.isTerminated()).isTrue();}
     private String token()throws Exception{JWTClaimsSet claims=new JWTClaimsSet.Builder().issuer(ISSUER).audience("authenticated").subject(user.toString()).claim("role","authenticated").issueTime(new Date()).expirationTime(Date.from(Instant.now().plusSeconds(300))).build();SignedJWT jwt=new SignedJWT(new JWSHeader(JWSAlgorithm.HS256),claims);jwt.sign(new MACSigner(SECRET.getBytes()));return jwt.serialize();}
 }

@@ -79,9 +79,29 @@ class HerdReproductionMigrationTest extends PostgresMigrationTestSupport {
                 assertThat(result.getBoolean("relforcerowsecurity")).isTrue();
                 assertThat(result.getBoolean("can_select")).isTrue();
                 assertThat(result.getBoolean("can_insert")).isTrue();
+                assertThat(result.getBoolean("can_update"))
+                        .isEqualTo(result.getString("relname").equals("animal_pregnancies"));
                 assertThat(result.getBoolean("public_select")).isFalse();
             }
         }
+    }
+
+    @Test
+    void shouldRejectInvalidPregnancyStateShapes() throws Exception {
+        Fixture fixture = fixture();
+        UUID mother = animal(fixture, fixture.farmA(), "MAE");
+        UUID pregnancy = pregnancy(fixture, mother, UUID.randomUUID());
+
+        assertThatThrownBy(() -> executeAsAdmin("""
+                update app.animal_pregnancies set status='CONFIRMED' where id=?
+                """, pregnancy))
+                .isInstanceOf(SQLException.class)
+                .hasMessageContaining("animal_pregnancies_state_shape_check");
+        assertThatThrownBy(() -> executeAsAdmin("""
+                update app.animal_pregnancies set status='CALVED',calf_animal_id=? where id=?
+                """, mother, pregnancy))
+                .isInstanceOf(SQLException.class)
+                .hasMessageContaining("animal_pregnancies_state_shape_check");
     }
 
     @Test
