@@ -25,6 +25,8 @@ app:
     schema: ${DATABASE_SCHEMA:app}
     runtime-role: ${DATABASE_RUNTIME_ROLE:app_api}
 herd:
+  dashboard:
+    maximum-custom-range-days: ${HERD_DASHBOARD_MAXIMUM_CUSTOM_RANGE_DAYS:366}
   reproduction:
     default-gestation-days: ${HERD_REPRODUCTION_DEFAULT_GESTATION_DAYS:283}
   pending-work:
