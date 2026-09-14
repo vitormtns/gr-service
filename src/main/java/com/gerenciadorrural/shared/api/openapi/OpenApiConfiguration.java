@@ -1,19 +1,5 @@
 package com.gerenciadorrural.shared.api.openapi;
 
-import com.gerenciadorrural.modules.herd.api.HerdAgendaController;
-import com.gerenciadorrural.modules.herd.api.HerdAnimalController;
-import com.gerenciadorrural.modules.herd.api.HerdDashboardController;
-import com.gerenciadorrural.modules.herd.api.HerdIntelligenceController;
-import com.gerenciadorrural.modules.herd.api.HerdPlannerController;
-import com.gerenciadorrural.modules.herd.api.HerdReportController;
-import com.gerenciadorrural.modules.identity.api.CurrentUserController;
-import com.gerenciadorrural.modules.inventory.api.InventoryController;
-import com.gerenciadorrural.modules.finance.api.FinanceController;
-import com.gerenciadorrural.modules.farms.api.FarmProfileController;
-import com.gerenciadorrural.modules.organizations.api.CurrentUserOrganizationsController;
-import com.gerenciadorrural.modules.organizations.api.ResolvedTenantContext;
-import com.gerenciadorrural.modules.organizations.api.TenantContextController;
-import com.gerenciadorrural.modules.platform.api.PlatformAdministrationController;
 import com.gerenciadorrural.shared.api.error.ApiErrorResponse;
 import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.models.Components;
@@ -98,7 +84,9 @@ public class OpenApiConfiguration {
             addResponse(operation, "503", "Dependência temporariamente indisponível");
 
             boolean tenantAware = Arrays.stream(handlerMethod.getMethodParameters())
-                    .anyMatch(parameter -> parameter.hasParameterAnnotation(ResolvedTenantContext.class));
+                    .flatMap(parameter -> Arrays.stream(parameter.getParameterAnnotations()))
+                    .anyMatch(annotation -> annotation.annotationType().getName().equals(
+                            "com.gerenciadorrural.modules.organizations.api.ResolvedTenantContext"));
             if (tenantAware) {
                 operation.addParametersItem(contextHeader(
                         "X-Organization-Id",
@@ -140,19 +128,20 @@ public class OpenApiConfiguration {
     }
 
     private static String tagFor(Class<?> controller, String method) {
-        if (controller == CurrentUserController.class) return "Identity";
-        if (controller == CurrentUserOrganizationsController.class || controller == TenantContextController.class) {
+        String name = controller.getSimpleName();
+        if (name.equals("CurrentUserController")) return "Identity";
+        if (name.equals("CurrentUserOrganizationsController") || name.equals("TenantContextController")) {
             return "Organizations";
         }
-        if (controller == PlatformAdministrationController.class) return "Platform";
-        if (controller == FarmProfileController.class) return "Farms";
-        if (controller == InventoryController.class) return "Inventory";
-        if (controller == FinanceController.class) return "Finance";
-        if (controller == HerdPlannerController.class) return "Planner";
-        if (controller == HerdAgendaController.class) return "Agenda";
-        if (controller == HerdIntelligenceController.class && method.equals("pending")) return "Pending Work";
-        if (controller == HerdReportController.class) return "Reports";
-        if (controller == HerdDashboardController.class) return "Dashboard";
+        if (name.equals("PlatformAdministrationController")) return "Platform";
+        if (name.equals("FarmProfileController")) return "Farms";
+        if (name.equals("InventoryController")) return "Inventory";
+        if (name.equals("FinanceController")) return "Finance";
+        if (name.equals("HerdPlannerController")) return "Planner";
+        if (name.equals("HerdAgendaController")) return "Agenda";
+        if (name.equals("HerdIntelligenceController") && method.equals("pending")) return "Pending Work";
+        if (name.equals("HerdReportController")) return "Reports";
+        if (name.equals("HerdDashboardController")) return "Dashboard";
         return "Herd";
     }
 
@@ -161,14 +150,15 @@ public class OpenApiConfiguration {
         MediaType json = operation.getRequestBody().getContent().get("application/json");
         if (json == null) return;
 
-        if (controller == HerdAnimalController.class && method.equals("create")) {
+        String name = controller.getSimpleName();
+        if (name.equals("HerdAnimalController") && method.equals("create")) {
             json.setExample(Map.of(
                     "id", "d31ad9b5-fc8d-4e55-8a49-d7ca5ae2cae2",
                     "identification", "BR-2026-001",
                     "name", "Aurora",
                     "sex", "FEMALE",
                     "birthDate", "2024-03-15"));
-        } else if (controller == InventoryController.class && method.equals("move")) {
+        } else if (name.equals("InventoryController") && method.equals("move")) {
             json.setExample(Map.of(
                     "operationId", "91bd35a8-5c90-4dfc-8cf8-2efb7c46f397",
                     "type", "RECEIPT",
@@ -176,7 +166,7 @@ public class OpenApiConfiguration {
                     "destinationLocationId", "e9749e1f-510a-4261-a09e-978465ebc934",
                     "quantity", 25,
                     "occurredOn", "2026-09-14"));
-        } else if (controller == FinanceController.class && method.equals("create")) {
+        } else if (name.equals("FinanceController") && method.equals("create")) {
             json.setExample(Map.of(
                     "operationId", "4259cbd8-9014-4147-a31c-9483ff1cab92",
                     "type", "INCOME",
@@ -184,7 +174,7 @@ public class OpenApiConfiguration {
                     "description", "Venda do lote",
                     "amount", 1200.00,
                     "dueOn", "2026-09-14"));
-        } else if (controller == HerdPlannerController.class && method.equals("create")) {
+        } else if (name.equals("HerdPlannerController") && method.equals("create")) {
             json.setExample(Map.of(
                     "operationId", "848ad781-b38b-423d-94a1-0f1fbfa8d742",
                     "type", "VACCINATION",
