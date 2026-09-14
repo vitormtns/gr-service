@@ -5,6 +5,8 @@ import com.gerenciadorrural.shared.api.error.ApiErrorResponse;
 import com.gerenciadorrural.shared.observability.RequestContextFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.dao.DataAccessException;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +17,7 @@ import java.time.Instant;
 import java.util.List;
 
 @RestControllerAdvice(assignableTypes = FinanceController.class)
+@Order(Ordered.HIGHEST_PRECEDENCE)
 class FinanceExceptionHandler {
     private ResponseEntity<ApiErrorResponse> error(HttpStatus status, String code, HttpServletRequest request) {
         Object requestId = request.getAttribute(RequestContextFilter.REQUEST_ID_ATTRIBUTE);

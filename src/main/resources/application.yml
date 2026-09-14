@@ -24,6 +24,11 @@ app:
   database:
     schema: ${DATABASE_SCHEMA:app}
     runtime-role: ${DATABASE_RUNTIME_ROLE:app_api}
+  http:
+    cors:
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+      allow-credentials: ${CORS_ALLOW_CREDENTIALS:false}
+      max-age: ${CORS_MAX_AGE:30m}
 herd:
   dashboard:
     maximum-custom-range-days: ${HERD_DASHBOARD_MAXIMUM_CUSTOM_RANGE_DAYS:366}
@@ -41,10 +46,28 @@ management:
   endpoint:
     health:
       show-details: never
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
+
+springdoc:
+  api-docs:
+    enabled: ${OPENAPI_ENABLED:false}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${SWAGGER_UI_ENABLED:false}
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+    display-request-duration: true
 
 logging:
   pattern:
-    level: "%5p [requestId:%X{requestId:-} correlationId:%X{correlationId:-} userId:%X{userId:-} tenantId:%X{tenantId:-}]"
+    level: "%5p [requestId:%X{requestId:-} correlationId:%X{correlationId:-} userId:%X{userId:-} tenantId:%X{tenantId:-} farmId:%X{farmId:-}]"
 
 ---
 spring:

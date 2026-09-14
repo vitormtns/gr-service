@@ -3,19 +3,24 @@ package com.gerenciadorrural.modules.identity.api;
 import com.gerenciadorrural.modules.identity.application.InternalUserConflictException;
 import com.gerenciadorrural.modules.identity.application.InternalUserDeactivatedException;
 import com.gerenciadorrural.modules.identity.application.InternalUserSuspendedException;
+import com.gerenciadorrural.modules.organizations.api.CurrentUserOrganizationsController;
 import com.gerenciadorrural.shared.api.error.ApiErrorResponse;
 import com.gerenciadorrural.shared.observability.RequestContextFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.time.Instant;
 import java.util.List;
 
-@RestControllerAdvice
+@Order(Ordered.HIGHEST_PRECEDENCE)
+@RestControllerAdvice(assignableTypes = {CurrentUserController.class, CurrentUserOrganizationsController.class})
 public class IdentityExceptionHandler {
 
     @ExceptionHandler(InternalUserSuspendedException.class)
@@ -57,6 +62,6 @@ public class IdentityExceptionHandler {
                 List.of(),
                 Instant.now()
         );
-        return ResponseEntity.status(status).body(response);
+        return ResponseEntity.status(status).cacheControl(CacheControl.noStore()).body(response);
     }
 }

@@ -4,6 +4,7 @@ import com.gerenciadorrural.shared.tenancy.TenantContext;
 import com.gerenciadorrural.shared.tenancy.TenantContextRequestAttribute;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.core.MethodParameter;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.support.WebDataBinderFactory;
 import org.springframework.web.context.request.NativeWebRequest;
@@ -18,14 +19,22 @@ import java.util.UUID;
   HttpServletRequest servlet=Objects.requireNonNull(request.getNativeRequest(HttpServletRequest.class));
   Object existingContext=servlet.getAttribute(TenantContextRequestAttribute.NAME);
   Object existingResolved=servlet.getAttribute(RESOLVED_ATTRIBUTE);
-  if(existingContext instanceof TenantContext context&&existingResolved instanceof ResolveTenantContext.Resolved resolved&&resolved.context()==context)return context;
+  if(existingContext instanceof TenantContext context&&existingResolved instanceof ResolveTenantContext.Resolved resolved&&resolved.context()==context){
+   addToMdc(context);
+   return context;
+  }
   String org=request.getHeader("X-Organization-Id"),farm=request.getHeader("X-Farm-Id");
   if(org==null||farm==null)throw new TenantContextHeaderException("TENANT_CONTEXT_HEADER_MISSING");
   UUID organizationId=parse(org),farmId=parse(farm);
   var result=resolver.execute(organizationId,farmId);
   servlet.setAttribute(TenantContextRequestAttribute.NAME,result.context());
   servlet.setAttribute(RESOLVED_ATTRIBUTE,result);
+  addToMdc(result.context());
   return result.context();
+ }
+ private static void addToMdc(TenantContext context){
+  MDC.put("tenantId",context.tenantId().toString());
+  MDC.put("farmId",context.farmId().toString());
  }
  private static UUID parse(String value){try{return UUID.fromString(value);}catch(IllegalArgumentException exception){throw new TenantContextHeaderException("TENANT_CONTEXT_HEADER_INVALID");}}
 }

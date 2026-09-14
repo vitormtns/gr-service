@@ -34,10 +34,15 @@ public class RequestContextFilter extends OncePerRequestFilter {
 
         request.setAttribute(REQUEST_ID_ATTRIBUTE, requestId);
         response.setHeader(REQUEST_ID_HEADER, requestId);
+        response.setHeader(CORRELATION_ID_HEADER, correlationId);
 
-        try (MDC.MDCCloseable ignoredRequest = MDC.putCloseable("requestId", requestId);
-             MDC.MDCCloseable ignoredCorrelation = MDC.putCloseable("correlationId", correlationId)) {
+        MDC.clear();
+        MDC.put("requestId", requestId);
+        MDC.put("correlationId", correlationId);
+        try {
             filterChain.doFilter(request, response);
+        } finally {
+            MDC.clear();
         }
     }
 
