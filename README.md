@@ -1,10 +1,12 @@
 # gr-service
 
-Backend do projeto provisoriamente chamado **Gerenciador Rural**. Este repositório contém a fundação técnica de uma API SaaS multi-tenant, organizada como monólito modular e preparada para crescer sem antecipar infraestrutura distribuída.
+Backend do **Gerenciador Rural**. O Backend MVP está completo e pronto para integração pelo Portal Angular e pelo aplicativo Flutter. A API SaaS multi-tenant é organizada como monólito modular e evolui, após a Phase 11, somente por necessidade real dos clientes ou correção de gaps.
 
 ## Estado atual
 
-A aplicação Spring Boot valida access tokens do Supabase Auth e expõe endpoints protegidos para identidade, organizações, fazendas acessíveis e resolução opt-in do contexto. O UUID validado de `sub` é sincronizado com `app.users` por JDBC explícito, de forma idempotente e concorrente. `GET /actuator/health` permanece público; os demais caminhos exigem autenticação ou ficam bloqueados.
+A aplicação Spring Boot valida access tokens do Supabase Auth e entrega os módulos Identity, Organizations/Tenant Context, Farms, Platform Administration, Herd, Planner/Pending Work/Reports/Dashboard, Inventory e Rural Finance. O UUID validado de `sub` é sincronizado com `app.users` por JDBC explícito, de forma idempotente e concorrente. Somente os probes de saúde ficam públicos; OpenAPI/Swagger é local por padrão e todas as rotas de negócio exigem autenticação.
+
+Comece pelo [guia de consumo da API](docs/api/consumer-guide.md), pelo [inventário de endpoints](docs/api/endpoint-inventory.md) e pelo documento de [Backend MVP Readiness](docs/backend-mvp-readiness.md).
 
 ## Arquitetura resumida
 
@@ -50,6 +52,9 @@ Variáveis documentadas em `.env.example`:
 | `SUPABASE_AUTH_JWT_SECRET` | Segredo somente de backend para HMAC legado; nunca o versione nem o envie a clientes. |
 | `SUPABASE_AUTH_AUDIENCES`, `SUPABASE_AUTH_TOKEN_ROLES` | Audiences e roles técnicas aceitas, separadas por vírgula. |
 | `SUPABASE_AUTH_CLOCK_SKEW` | Tolerância temporal pequena, com padrão de `30s`. |
+| `CORS_ALLOWED_ORIGINS` | Origins HTTP(S) explícitas do Portal, separadas por vírgula; curinga não é aceito. |
+| `CORS_ALLOW_CREDENTIALS`, `CORS_MAX_AGE` | Política CORS; credentials é `false` por padrão. |
+| `OPENAPI_ENABLED`, `SWAGGER_UI_ENABLED` | Opt-in da documentação; o perfil `local` habilita e `prod` desabilita por padrão. |
 
 Nunca versione `.env`, senhas, tokens, `service_role` ou chaves secretas.
 
@@ -73,7 +78,9 @@ DATABASE_USERNAME=<login-runtime-local> DATABASE_PASSWORD=<senha-local-não-vers
 ./mvnw spring-boot:run
 ```
 
-Verifique a aplicação em `http://localhost:8080/actuator/health`. O Actuator expõe somente o endpoint de saúde e não mostra detalhes publicamente. O perfil `local` já aponta para o issuer e o JWKS do Supabase CLI em `127.0.0.1`; nenhum segredo HMAC é necessário no stack local atual.
+Verifique a aplicação em `http://localhost:8080/actuator/health`. O Actuator expõe somente saúde e não mostra detalhes publicamente. Liveness fica em `/actuator/health/liveness` e não depende do banco; readiness fica em `/actuator/health/readiness` e inclui o PostgreSQL. O perfil `local` já aponta para o issuer e o JWKS do Supabase CLI em `127.0.0.1`; nenhum segredo HMAC é necessário no stack local atual.
+
+No perfil `local`, a especificação está em `http://localhost:8080/v3/api-docs/api-v1` e o Swagger UI em `http://localhost:8080/swagger-ui.html`. O perfil `prod` mantém ambos desligados, salvo opt-in explícito.
 
 ## Autenticação HTTP
 
@@ -100,14 +107,14 @@ Para um projeto remoto futuro, configure issuer, JWKS URI e algoritmo conforme a
 No Windows:
 
 ```powershell
-.\mvnw.cmd verify
+.\mvnw.cmd clean verify
 .\scripts\check.ps1
 ```
 
 Em Bash:
 
 ```bash
-./mvnw verify
+./mvnw clean verify
 ./scripts/check.sh
 ```
 

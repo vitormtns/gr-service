@@ -1,3 +1,5 @@
+debug: false
+
 spring:
   main:
     banner-mode: "off"
@@ -25,3 +27,15 @@ management:
   endpoint:
     health:
       show-details: never
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: false
+
+logging:
+  level:
+    root: INFO
+    org.springframework.jdbc.core: WARN
+    org.springframework.test: WARN

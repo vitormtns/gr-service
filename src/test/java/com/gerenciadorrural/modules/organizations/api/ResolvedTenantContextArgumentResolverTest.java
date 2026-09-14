@@ -6,6 +6,8 @@ import com.gerenciadorrural.shared.tenancy.TenantContext;
 import com.gerenciadorrural.shared.tenancy.TenantContextRequestAttribute;
 import com.gerenciadorrural.shared.tenancy.TenantId;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.slf4j.MDC;
 import org.springframework.core.MethodParameter;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.context.request.ServletWebRequest;
@@ -21,6 +23,11 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 class ResolvedTenantContextArgumentResolverTest {
+
+    @AfterEach
+    void clearMdc() {
+        MDC.clear();
+    }
 
     @Test
     void resolvesOnceAndReusesTheSameContextInstanceWithinTheRequest() throws Exception {
@@ -38,6 +45,8 @@ class ResolvedTenantContextArgumentResolverTest {
         assertThat(second).isSameAs(context);
         assertThat(request.getAttribute(TenantContextRequestAttribute.NAME)).isSameAs(context);
         assertThat(request.getAttribute(ResolvedTenantContextArgumentResolver.RESOLVED_ATTRIBUTE)).isSameAs(resolved);
+        assertThat(MDC.get("tenantId")).isEqualTo(context.tenantId().toString());
+        assertThat(MDC.get("farmId")).isEqualTo(context.farmId().toString());
         verify(useCase).execute(context.tenantId().value(), context.farmId());
         verifyNoMoreInteractions(useCase);
     }

@@ -19,12 +19,16 @@ import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(SupabaseSecurityProperties.class)
+@EnableConfigurationProperties({SupabaseSecurityProperties.class, HttpSecurityProperties.class})
 public class SecurityConfiguration {
 
     @Bean
@@ -38,7 +42,8 @@ public class SecurityConfiguration {
             Converter<Jwt, AbstractAuthenticationToken> authenticationConverter,
             JsonAuthenticationEntryPoint authenticationEntryPoint,
             JsonAccessDeniedHandler accessDeniedHandler,
-            AuthenticatedUserMdcFilter authenticatedUserMdcFilter
+            AuthenticatedUserMdcFilter authenticatedUserMdcFilter,
+            CorsConfigurationSource corsConfigurationSource
     ) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
@@ -46,9 +51,13 @@ public class SecurityConfiguration {
                 .formLogin(AbstractHttpConfigurer::disable)
                 .logout(AbstractHttpConfigurer::disable)
                 .requestCache(AbstractHttpConfigurer::disable)
+                .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/v3/api-docs", "/v3/api-docs/**",
+                                "/swagger-ui.html", "/swagger-ui/**").permitAll()
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().denyAll())
                 .exceptionHandling(exceptions -> exceptions
@@ -60,6 +69,22 @@ public class SecurityConfiguration {
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(authenticationConverter)))
                 .addFilterAfter(authenticatedUserMdcFilter, BearerTokenAuthenticationFilter.class);
         return http.build();
+    }
+
+    @Bean
+    CorsConfigurationSource corsConfigurationSource(HttpSecurityProperties properties) {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(properties.cors().allowedOrigins());
+        configuration.setAllowCredentials(properties.cors().allowCredentials());
+        configuration.setAllowedMethods(List.of("GET", "POST", "PATCH", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of(
+                "Authorization", "Content-Type", "X-Organization-Id", "X-Farm-Id",
+                "X-Request-ID", "X-Correlation-ID"));
+        configuration.setExposedHeaders(List.of("X-Request-ID", "X-Correlation-ID"));
+        configuration.setMaxAge(properties.cors().maxAge());
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/**", configuration);
+        return source;
     }
 
     @Bean
