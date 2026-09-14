@@ -76,6 +76,8 @@ abstract class PostgresMigrationTestSupport {
                     app.herd_movements,
                     app.herd_movement_operations,
                     app.animal_events,
+                    app.herd_planner_operations,
+                    app.herd_planner_items,
                     app.animals,
                     app.paddocks,
                     app.organization_invitation_farm_scopes,
