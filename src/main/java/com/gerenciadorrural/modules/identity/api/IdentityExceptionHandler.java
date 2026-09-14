@@ -3,11 +3,9 @@ package com.gerenciadorrural.modules.identity.api;
 import com.gerenciadorrural.modules.identity.application.InternalUserConflictException;
 import com.gerenciadorrural.modules.identity.application.InternalUserDeactivatedException;
 import com.gerenciadorrural.modules.identity.application.InternalUserSuspendedException;
-import com.gerenciadorrural.modules.organizations.api.CurrentUserOrganizationsController;
 import com.gerenciadorrural.shared.api.error.ApiErrorResponse;
 import com.gerenciadorrural.shared.observability.RequestContextFilter;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -20,7 +18,7 @@ import java.time.Instant;
 import java.util.List;
 
 @Order(Ordered.HIGHEST_PRECEDENCE)
-@RestControllerAdvice(assignableTypes = {CurrentUserController.class, CurrentUserOrganizationsController.class})
+@RestControllerAdvice
 public class IdentityExceptionHandler {
 
     @ExceptionHandler(InternalUserSuspendedException.class)
@@ -39,12 +37,6 @@ public class IdentityExceptionHandler {
     ResponseEntity<ApiErrorResponse> handleIdentityConflict(HttpServletRequest request) {
         return error(HttpStatus.CONFLICT, "INTERNAL_USER_CONFLICT",
                 "A identidade foi alterada simultaneamente; tente novamente", request);
-    }
-
-    @ExceptionHandler(DataAccessException.class)
-    ResponseEntity<ApiErrorResponse> handlePersistenceUnavailable(HttpServletRequest request) {
-        return error(HttpStatus.SERVICE_UNAVAILABLE, "IDENTITY_PERSISTENCE_UNAVAILABLE",
-                "O servi\u00e7o de identidade est\u00e1 temporariamente indispon\u00edvel", request);
     }
 
     private static ResponseEntity<ApiErrorResponse> error(

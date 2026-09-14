@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.Instant;
 import java.util.Comparator;
@@ -78,6 +79,12 @@ public class ApiExceptionHandler {
         logFailure("Dependência de persistência indisponível", exception, request);
         return error(HttpStatus.SERVICE_UNAVAILABLE, "persistence_unavailable",
                 "O serviço está temporariamente indisponível", List.of(), request);
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    ResponseEntity<ApiErrorResponse> handleResourceNotFound(HttpServletRequest request) {
+        return error(HttpStatus.NOT_FOUND, "resource_not_found",
+                "O recurso solicitado n\u00e3o foi encontrado", List.of(), request);
     }
 
     @ExceptionHandler(Exception.class)
