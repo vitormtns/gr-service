@@ -1,10 +1,12 @@
 package com.gerenciadorrural.modules.herd.application;
 
-import com.gerenciadorrural.modules.herd.domain.HerdAgendaRepository;
 import com.gerenciadorrural.modules.herd.domain.HerdAgendaSource;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSex;
+import com.gerenciadorrural.modules.herd.domain.BrucellosisPrimaryCompliance;
+import com.gerenciadorrural.modules.herd.domain.BrucellosisPrimaryState;
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardPeriod;
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository;
+import com.gerenciadorrural.modules.herd.domain.HerdManagementRepository;
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository.ActivityBucket;
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository.ActivityTotals;
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository.AttentionSummary;
@@ -33,7 +35,8 @@ public class ReadHerdDashboard {
 
   private final TenantTransactionExecutor transactions;
   private final HerdDashboardRepository dashboard;
-  private final HerdAgendaRepository agenda;
+  private final ReadHerdAgenda agenda;
+  private final HerdManagementRepository herd;
   private final Clock clock;
   private final int weighingDueDays;
   private final int calvingUpcomingDays;
@@ -42,7 +45,8 @@ public class ReadHerdDashboard {
   public ReadHerdDashboard(
       TenantTransactionExecutor transactions,
       HerdDashboardRepository dashboard,
-      HerdAgendaRepository agenda,
+      ReadHerdAgenda agenda,
+      HerdManagementRepository herd,
       Clock clock,
       @Value("${herd.pending-work.weighing-due-days:90}") int weighingDueDays,
       @Value("${herd.pending-work.calving-upcoming-days:14}") int calvingUpcomingDays,
@@ -50,6 +54,7 @@ public class ReadHerdDashboard {
     this.transactions = transactions;
     this.dashboard = dashboard;
     this.agenda = agenda;
+    this.herd = herd;
     this.clock = clock;
     this.weighingDueDays = weighingDueDays;
     this.calvingUpcomingDays = calvingUpcomingDays;
@@ -95,7 +100,9 @@ public class ReadHerdDashboard {
                   attention.calvingUpcoming(),
                   attention.calvingOverdue(),
                   attention.plannerOpen(),
-                  attention.plannerOverdue()),
+                  attention.plannerOverdue(),
+                  attention.brucellosisDue(),
+                  attention.brucellosisWindowMissed()),
               insights(insightSnapshot, activity, attention, pipeline, resolved));
         });
   }
@@ -126,19 +133,8 @@ public class ReadHerdDashboard {
           AttentionSummary summary = currentAttention(context, referenceDate);
           List<AttentionItem> preview =
               agenda
-                  .page(
-                      context.tenantId(),
-                      context.farmId(),
-                      referenceDate,
-                      weighingDueDays,
-                      calvingUpcomingDays,
-                      null,
-                      null,
-                      null,
-                      null,
-                      null,
-                      previewSize,
-                      0)
+                  .page(context, null, null, null, null, null, 0, previewSize)
+                  .items()
                   .stream()
                   .map(ReadHerdDashboard::item)
                   .toList();
@@ -147,12 +143,35 @@ public class ReadHerdDashboard {
   }
 
   private AttentionSummary currentAttention(TenantContext context, LocalDate referenceDate) {
-    return dashboard.attention(
+    AttentionSummary legacy = dashboard.attention(
         context.tenantId(),
         context.farmId(),
         referenceDate,
         weighingDueDays,
         calvingUpcomingDays);
+    long brucellosisDue = 0;
+    long brucellosisWindowMissed = 0;
+    for (HerdManagementRepository.BrucellosisPendingCandidate candidate
+        : herd.brucellosisPendingCandidates(
+            context.tenantId(), context.farmId(), referenceDate, null)) {
+      BrucellosisPrimaryState state = BrucellosisPrimaryCompliance.evaluate(
+          candidate.sex(), candidate.birthDate(), referenceDate, candidate.treatments());
+      if (state == BrucellosisPrimaryState.DUE_IN_WINDOW) {
+        brucellosisDue++;
+      } else if (state == BrucellosisPrimaryState.WINDOW_MISSED) {
+        brucellosisWindowMissed++;
+      }
+    }
+    return new AttentionSummary(
+        legacy.vaccinationDue(),
+        legacy.dewormingDue(),
+        legacy.weighingDue(),
+        legacy.calvingUpcoming(),
+        legacy.calvingOverdue(),
+        legacy.plannerOpen(),
+        legacy.plannerOverdue(),
+        brucellosisDue,
+        brucellosisWindowMissed);
   }
 
   private Insights insights(
@@ -246,7 +265,7 @@ public class ReadHerdDashboard {
     }
   }
 
-  private static AttentionItem item(HerdAgendaRepository.Row row) {
+  private static AttentionItem item(ReadHerdAgenda.Item row) {
     AnimalReference animal =
         row.animalId() == null
             ? null
@@ -290,7 +309,9 @@ public class ReadHerdDashboard {
       long calvingUpcoming,
       long calvingOverdue,
       long openPlannerItems,
-      long overduePlannerItems) {}
+      long overduePlannerItems,
+      long brucellosisDue,
+      long brucellosisWindowMissed) {}
 
   public record Activity(
       ResolvedPeriod period, ActivityTotals totals, List<ActivityBucket> series) {}

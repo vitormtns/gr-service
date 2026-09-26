@@ -76,7 +76,9 @@ public interface HerdDashboardRepository {
       long calvingUpcoming,
       long calvingOverdue,
       long plannerOpen,
-      long plannerOverdue) {}
+      long plannerOverdue,
+      long brucellosisDue,
+      long brucellosisWindowMissed) {}
 
   record ReproductionPipeline(long openPossiblePregnancies, long openConfirmedPregnancies) {}
 }

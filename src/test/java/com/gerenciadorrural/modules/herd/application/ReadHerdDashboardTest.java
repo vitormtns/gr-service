@@ -16,6 +16,7 @@ import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository.Activity
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository.AttentionSummary;
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository.HerdSnapshot;
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository.ReproductionPipeline;
+import com.gerenciadorrural.modules.herd.domain.HerdManagementRepository;
 import com.gerenciadorrural.modules.herd.domain.HerdReportCategory;
 import com.gerenciadorrural.shared.tenancy.TenantContext;
 import com.gerenciadorrural.shared.tenancy.TenantId;
@@ -44,6 +45,7 @@ class ReadHerdDashboardTest {
           "ALL_FARMS");
   private final HerdDashboardRepository repository = mock(HerdDashboardRepository.class);
   private final HerdAgendaRepository agenda = mock(HerdAgendaRepository.class);
+  private final HerdManagementRepository herd = mock(HerdManagementRepository.class);
   private ReadHerdDashboard service;
 
   @BeforeEach
@@ -52,19 +54,22 @@ class ReadHerdDashboardTest {
         .thenReturn(new HerdSnapshot(0, Map.of(), Map.of(), List.of(), 0));
     when(repository.activity(any(), any(), any(), any())).thenReturn(activity());
     when(repository.attention(any(), any(), any(), anyInt(), anyInt()))
-        .thenReturn(new AttentionSummary(0, 0, 0, 0, 0, 0, 0));
+        .thenReturn(new AttentionSummary(0, 0, 0, 0, 0, 0, 0, 0, 0));
     when(repository.reproductionPipeline(any(), any(), any(), anyInt()))
         .thenReturn(new ReproductionPipeline(0, 0));
     when(repository.activitySeries(any(), any(), any(), any())).thenReturn(List.of());
     when(agenda.page(
             any(), any(), any(), anyInt(), anyInt(), any(), any(), any(), any(), any(), anyInt(), anyLong()))
         .thenReturn(List.of());
+    Clock clock = Clock.fixed(Instant.parse("2026-09-13T12:00:00Z"), ZoneOffset.UTC);
+    TenantTransactionExecutor transactions = synchronousTransactions();
     service =
         new ReadHerdDashboard(
-            synchronousTransactions(),
+            transactions,
             repository,
-            agenda,
-            Clock.fixed(Instant.parse("2026-09-13T12:00:00Z"), ZoneOffset.UTC),
+            new ReadHerdAgenda(transactions, agenda, herd, clock, 90, 14),
+            herd,
+            clock,
             90,
             14,
             366);
@@ -192,7 +197,7 @@ class ReadHerdDashboardTest {
     when(repository.snapshot(any(), any(), any(), any(), any()))
         .thenReturn(new HerdSnapshot(active, Map.of(), Map.of(), List.of(), 0));
     when(repository.attention(any(), any(), any(), anyInt(), anyInt()))
-        .thenReturn(new AttentionSummary(0, 0, due, 0, 0, 0, 0));
+        .thenReturn(new AttentionSummary(0, 0, due, 0, 0, 0, 0, 0, 0));
     return service
         .overview(context, HerdDashboardPeriod.TODAY, null, null, null, null, null)
         .insights()
