@@ -6,6 +6,7 @@ public interface HerdManagementRepository {
  void treatment(TenantId t,UUID farm,UUID animal,UUID op,HealthTreatmentType type,HealthProcedureCode procedureCode,LocalDate day,String product,String protocol,LocalDate due,String notes,UUID actor);
  List<Weight> weights(TenantId t,UUID farm,UUID animal,int size,long offset); long weightCount(TenantId t,UUID farm,UUID animal);
  List<Treatment> treatments(TenantId t,UUID farm,UUID animal,int size,long offset); long treatmentCount(TenantId t,UUID farm,UUID animal);
+ default Optional<Treatment> findTreatment(TenantId t,UUID farm,UUID animal,UUID treatment){throw new UnsupportedOperationException();}
  default List<Pending> pending(TenantId t,UUID farm,LocalDate reference,int weighingDays,int upcomingDays,PendingWorkType type,UUID animal,int size,long offset){throw new UnsupportedOperationException();}
  default long pendingCount(TenantId t,UUID farm,LocalDate reference,int weighingDays,int upcomingDays,PendingWorkType type,UUID animal){throw new UnsupportedOperationException();}
  default List<BrucellosisPendingCandidate> brucellosisPendingCandidates(TenantId t,UUID farm,LocalDate reference,UUID animal){throw new UnsupportedOperationException();}
