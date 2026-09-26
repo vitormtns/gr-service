@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.gerenciadorrural.modules.herd.application.ReadHerdDashboard;
+import com.gerenciadorrural.modules.herd.application.ReadHerdAgenda;
 import com.gerenciadorrural.modules.herd.domain.HerdAgendaRepository;
 import com.gerenciadorrural.modules.herd.domain.HerdAgendaSource;
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository;
@@ -26,6 +27,7 @@ import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository.Activity
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository.AttentionSummary;
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository.HerdSnapshot;
 import com.gerenciadorrural.modules.herd.domain.HerdDashboardRepository.ReproductionPipeline;
+import com.gerenciadorrural.modules.herd.domain.HerdManagementRepository;
 import com.gerenciadorrural.modules.herd.domain.HerdPlannerStatus;
 import com.gerenciadorrural.modules.herd.domain.HerdPlannerType;
 import com.gerenciadorrural.modules.herd.domain.PendingWorkType;
@@ -65,12 +67,14 @@ class HerdDashboardControllerContractTest {
           "ALL_FARMS");
   private HerdDashboardRepository repository;
   private HerdAgendaRepository agenda;
+  private HerdManagementRepository herd;
   private MockMvc mvc;
 
   @BeforeEach
   void setUp() {
     repository = mock(HerdDashboardRepository.class);
     agenda = mock(HerdAgendaRepository.class);
+    herd = mock(HerdManagementRepository.class);
     TenantTransactionExecutor transactions = mock(TenantTransactionExecutor.class);
     doAnswer(invocation -> ((TenantTransactionalOperation<?>) invocation.getArgument(1)).execute())
         .when(transactions)
@@ -79,19 +83,21 @@ class HerdDashboardControllerContractTest {
         .thenReturn(new HerdSnapshot(0, Map.of(), Map.of(), List.of(), 0));
     when(repository.activity(any(), any(), any(), any())).thenReturn(totals());
     when(repository.attention(any(), any(), any(), anyInt(), anyInt()))
-        .thenReturn(new AttentionSummary(0, 0, 0, 0, 0, 0, 0));
+        .thenReturn(new AttentionSummary(0, 0, 0, 0, 0, 0, 0, 0, 0));
     when(repository.reproductionPipeline(any(), any(), any(), anyInt()))
         .thenReturn(new ReproductionPipeline(0, 0));
     when(repository.activitySeries(any(), any(), any(), any())).thenReturn(List.of());
     when(agenda.page(
             any(), any(), any(), anyInt(), anyInt(), any(), any(), any(), any(), any(), anyInt(), anyLong()))
         .thenReturn(List.of());
+    Clock clock = Clock.fixed(Instant.parse("2026-09-13T12:00:00Z"), ZoneOffset.UTC);
     ReadHerdDashboard service =
         new ReadHerdDashboard(
             transactions,
             repository,
-            agenda,
-            Clock.fixed(Instant.parse("2026-09-13T12:00:00Z"), ZoneOffset.UTC),
+            new ReadHerdAgenda(transactions, agenda, herd, clock, 90, 14),
+            herd,
+            clock,
             90,
             14,
             366);
@@ -110,6 +116,8 @@ class HerdDashboardControllerContractTest {
 
   @Test
   void exposesStableTypedContractsWithNoStore() throws Exception {
+    when(agenda.count(any(), any(), any(), anyInt(), anyInt(), any(), any(), any(), any(), any()))
+        .thenReturn(2L);
     when(repository.activitySeries(any(), any(), any(), any()))
         .thenReturn(
             List.of(

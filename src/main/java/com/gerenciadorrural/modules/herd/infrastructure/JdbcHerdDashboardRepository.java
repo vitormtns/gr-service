@@ -251,7 +251,9 @@ public class JdbcHerdDashboardRepository implements HerdDashboardRepository {
                 result.getLong("upcoming"),
                 result.getLong("overdue"),
                 result.getLong("planner_open"),
-                result.getLong("planner_overdue")));
+                result.getLong("planner_overdue"),
+                0L,
+                0L));
   }
 
   @Override

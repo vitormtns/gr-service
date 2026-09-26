@@ -1,4 +1,10 @@
 package com.gerenciadorrural.modules.herd.domain;
 
-public sealed interface AnimalEventDetails permits CreatedEventDetails, CorrectedEventDetails, LifecycleEventDetails, MovedEventDetails, TransferredEventDetails, WeighedEventDetails, HealthTreatmentEventDetails, BreedingEventDetails, PregnancyEventDetails, CalvingEventDetails, BornEventDetails {
+import java.util.UUID;
+
+public sealed interface AnimalEventDetails permits CreatedEventDetails, CorrectedEventDetails, LifecycleEventDetails, MovedEventDetails, TransferredEventDetails, WeighedEventDetails, HealthTreatmentEventDetails, AnimalEventDetails.HealthTreatmentRetractionEventDetails, BreedingEventDetails, PregnancyEventDetails, CalvingEventDetails, BornEventDetails {
+
+    record HealthTreatmentRetractionEventDetails(UUID treatmentId, UUID retractionId, String reason)
+            implements AnimalEventDetails {
+    }
 }
