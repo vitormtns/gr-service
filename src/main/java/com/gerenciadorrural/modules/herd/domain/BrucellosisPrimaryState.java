@@ -1,0 +1,11 @@
+package com.gerenciadorrural.modules.herd.domain;
+
+public enum BrucellosisPrimaryState {
+  NOT_APPLICABLE,
+  PROHIBITED_VACCINATION_RECORDED,
+  BEFORE_WINDOW,
+  DUE_IN_WINDOW,
+  PRIMARY_VACCINATION_RECORDED,
+  WINDOW_MISSED,
+  POST_WINDOW_RECORD_UNVERIFIED
+}
