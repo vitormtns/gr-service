@@ -20,6 +20,8 @@ public interface HerdReportRepository {
       int limit,
       long offset);
 
+  List<AgeSexCount> currentAgeSexCounts(TenantId tenantId, UUID farmId);
+
   ReportPage<LifecycleSummary, LifecycleItem> lifecycle(
       TenantId tenantId,
       UUID farmId,
@@ -125,6 +127,8 @@ public interface HerdReportRepository {
 
   record PaddockTotal(PaddockReference paddock, long total) {}
 
+  record AgeSexCount(HerdAnimalSex sex, LocalDate birthDate, long count) {}
+
   record HerdPositionSummary(
       long totalActiveAnimals,
       Map<HerdReportCategory, Long> totalsByCategory,
@@ -147,7 +151,11 @@ public interface HerdReportRepository {
       LifecycleEvent event,
       LocalDate occurredOn,
       Instant recordedAt,
-      String notes) {}
+      String notes,
+      String deathReason,
+      SaleChannel saleChannel,
+      String saleBuyer,
+      BigDecimal saleAmount) {}
 
   record MovementSummary(long movementCount, long distinctAnimalsMoved) {}
 

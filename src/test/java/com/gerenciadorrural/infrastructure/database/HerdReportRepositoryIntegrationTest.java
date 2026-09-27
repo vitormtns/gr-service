@@ -21,6 +21,25 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
   private static final LocalDate TO = LocalDate.of(2026, 12, 31);
 
   @Test
+  void groupsCurrentActiveAnimalsBySexAndBirthDateWithinFarmAndTenant() throws Exception {
+    Fixture f = fixture();
+    try (Connection connection = adminConnection()) {
+      JdbcHerdReportRepository reports = repository(connection);
+      assertThat(reports.currentAgeSexCounts(tenant(f), f.farm()))
+          .containsExactlyInAnyOrder(
+              new AgeSexCount(HerdAnimalSex.FEMALE, LocalDate.of(2024, 1, 1), 1),
+              new AgeSexCount(HerdAnimalSex.MALE, LocalDate.of(2024, 1, 1), 1));
+      assertThat(reports.currentAgeSexCounts(tenant(f), f.otherFarm())).isEmpty();
+    }
+    Fixture outsider = fixture();
+    try (Connection connection = apiConnection()) {
+      setTenant(connection, outsider.tenant());
+      assertThat(repository(connection).currentAgeSexCounts(tenant(f), f.farm())).isEmpty();
+      connection.rollback();
+    }
+  }
+
+  @Test
   void derivesAllExplicitReportsWithoutChangingOperationalFacts() throws Exception {
     Fixture f = fixture();
     seedFacts(f);
@@ -50,6 +69,12 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
           .containsEntry(LifecycleEvent.DECEASED, 1L);
       assertThat(lifecycle.summary().totalAffectedAnimals()).isEqualTo(4);
       assertThat(lifecycle.totalElements()).isEqualTo(7);
+      assertThat(lifecycle.items()).filteredOn(item -> item.event() == LifecycleEvent.SOLD)
+          .singleElement().satisfies(item -> {
+            assertThat(item.saleChannel()).isEqualTo(SaleChannel.AUCTION);
+            assertThat(item.saleBuyer()).isEqualTo("Comprador");
+            assertThat(item.saleAmount()).isEqualByComparingTo("1200.50");
+          });
 
       var movements =
           reports.movements(
@@ -446,7 +471,8 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
           null,
           "{\"identification\":\"" + identification + "\",\"name\":\"Histórico\"}");
     }
-    event(f, f.sold(), "SOLD", LocalDate.of(2026, 2, 1), UUID.randomUUID(), "{\"notes\":\"Venda\"}");
+    event(f, f.sold(), "SOLD", LocalDate.of(2026, 2, 1), UUID.randomUUID(),
+        "{\"notes\":\"Venda\",\"saleChannel\":\"AUCTION\",\"saleBuyer\":\"Comprador\",\"saleAmount\":1200.50}");
     event(
         f,
         f.deceased(),

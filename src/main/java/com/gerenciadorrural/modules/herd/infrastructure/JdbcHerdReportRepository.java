@@ -34,6 +34,23 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
   }
 
   @Override
+  public List<AgeSexCount> currentAgeSexCounts(TenantId tenant, UUID farm) {
+    return jdbc.query(
+        """
+        select a.sex, a.birth_date, count(*) total
+          from app.animals a
+         where a.tenant_id=:tenant and a.farm_id=:farm and a.status='ACTIVE'
+         group by a.sex, a.birth_date
+         order by a.sex, a.birth_date
+        """,
+        base(tenant, farm),
+        (rs, row) -> new AgeSexCount(
+            HerdAnimalSex.valueOf(rs.getString("sex")),
+            rs.getObject("birth_date", LocalDate.class),
+            rs.getLong("total")));
+  }
+
+  @Override
   public ReportPage<HerdPositionSummary, HerdPositionItem> herdPosition(
       TenantId tenant,
       UUID farm,
@@ -148,7 +165,10 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
                 + """
                 select e.id,e.animal_id,s.identification,s.name,e.event_type,
                        coalesce(e.occurred_on,e.recorded_at::date) effective_on,e.recorded_at,
-                       e.payload->>'notes' notes
+                       e.payload->>'notes' notes, e.payload->>'deathReason' death_reason,
+                       e.payload->>'saleChannel' sale_channel,
+                       e.payload->>'saleBuyer' sale_buyer,
+                       e.payload->>'saleAmount' sale_amount
                   from app.animal_events e left join snapshots s on s.animal_id=e.animal_id
                 """
                 + where
@@ -161,7 +181,13 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
                     LifecycleEvent.valueOf(rs.getString("event_type")),
                     rs.getObject("effective_on", LocalDate.class),
                     instant(rs, "recorded_at"),
-                    rs.getString("notes")));
+                    rs.getString("notes"),
+                    rs.getString("death_reason"),
+                    rs.getString("sale_channel") == null ? null
+                        : SaleChannel.valueOf(rs.getString("sale_channel")),
+                    rs.getString("sale_buyer"),
+                    rs.getString("sale_amount") == null ? null
+                        : new BigDecimal(rs.getString("sale_amount"))));
     return new ReportPage<>(new LifecycleSummary(counts, affected), items, total);
   }
 

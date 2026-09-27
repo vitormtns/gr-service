@@ -7,7 +7,10 @@ import com.gerenciadorrural.shared.tenancy.TenantTransactionExecutor;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -41,6 +44,44 @@ public class ReadHerdReports {
     this.clock = clock;
     this.defaultRangeDays = defaultRangeDays;
     this.maximumRangeDays = maximumRangeDays;
+  }
+
+  public AgeSexBalance currentAgeSexBalance(TenantContext context, LocalDate referenceDate) {
+    validateRole(context);
+    LocalDate today = LocalDate.now(clock);
+    LocalDate reference = referenceDate == null ? today : referenceDate;
+    if (reference.isAfter(today)) {
+      throw new HerdReportQueryInvalidException();
+    }
+    return transactions.execute(context, () -> {
+      Map<AgeBand, Map<HerdAnimalSex, Long>> counts = new EnumMap<>(AgeBand.class);
+      for (AgeBand band : AgeBand.values()) {
+        Map<HerdAnimalSex, Long> bySex = new EnumMap<>(HerdAnimalSex.class);
+        for (HerdAnimalSex sex : HerdAnimalSex.values()) {
+          bySex.put(sex, 0L);
+        }
+        counts.put(band, bySex);
+      }
+      long total = 0;
+      long unknownBirthDate = 0;
+      for (AgeSexCount row : reports.currentAgeSexCounts(context.tenantId(), context.farmId())) {
+        total += row.count();
+        if (row.birthDate() == null || row.birthDate().isAfter(reference)) {
+          unknownBirthDate += row.count();
+        } else {
+          Map<HerdAnimalSex, Long> bySex = counts.get(AgePolicy.classify(row.birthDate(), reference));
+          bySex.merge(row.sex(), row.count(), Long::sum);
+        }
+      }
+      List<AgeSexCell> cells = new ArrayList<>();
+      for (AgeBand band : AgeBand.values()) {
+        for (HerdAnimalSex sex : HerdAnimalSex.values()) {
+          cells.add(new AgeSexCell(band, sex, counts.get(band).get(sex)));
+        }
+      }
+      return new AgeSexBalance(reference, "CURRENT_STATE_AGED_AT_REFERENCE", total,
+          unknownBirthDate, List.copyOf(cells));
+    });
   }
 
   public Page<HerdPositionSummary, HerdPositionItem> herdPosition(
@@ -283,11 +324,15 @@ public class ReadHerdReports {
   }
 
   private static void validate(TenantContext context, int page, int size) {
-    if (!READ_ROLES.contains(context.role())) {
-      throw new HerdReportForbiddenException();
-    }
+    validateRole(context);
     if (page < 0 || size < 1 || size > 100 || offset(page, size) > Integer.MAX_VALUE) {
       throw new HerdReportQueryInvalidException();
+    }
+  }
+
+  private static void validateRole(TenantContext context) {
+    if (!READ_ROLES.contains(context.role())) {
+      throw new HerdReportForbiddenException();
     }
   }
 
@@ -303,4 +348,9 @@ public class ReadHerdReports {
 
   public record Page<S, I>(
       S summary, List<I> items, int page, int size, long totalElements, int totalPages) {}
+
+  public record AgeSexCell(AgeBand ageBand, HerdAnimalSex sex, long count) {}
+
+  public record AgeSexBalance(LocalDate referenceDate, String positionSemantics,
+      long totalActiveAnimals, long unknownBirthDate, List<AgeSexCell> cells) {}
 }

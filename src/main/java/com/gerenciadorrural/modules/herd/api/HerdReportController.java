@@ -22,6 +22,15 @@ public class HerdReportController {
     this.reports = reports;
   }
 
+  @GetMapping("/current-age-sex-balance")
+  ResponseEntity<?> currentAgeSexBalance(
+      @ResolvedTenantContext TenantContext context,
+      @RequestParam(required = false) LocalDate referenceDate,
+      HttpServletRequest request) {
+    parameters(request, "referenceDate");
+    return ok(reports.currentAgeSexBalance(context, referenceDate));
+  }
+
   @GetMapping("/herd-position")
   ResponseEntity<?> herdPosition(
       @ResolvedTenantContext TenantContext context,

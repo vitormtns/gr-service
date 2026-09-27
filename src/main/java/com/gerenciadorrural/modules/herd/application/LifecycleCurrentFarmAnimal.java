@@ -1,12 +1,124 @@
 package com.gerenciadorrural.modules.herd.application;
-import com.gerenciadorrural.modules.herd.domain.*; import com.gerenciadorrural.shared.tenancy.*; import org.springframework.stereotype.Service; import java.time.*; import java.util.*;
-@Service public class LifecycleCurrentFarmAnimal {
- private final TenantTransactionExecutor tx; private final HerdAnimalProfileRepository animals; private final AnimalEventRepository events; private final Clock clock;
- public LifecycleCurrentFarmAnimal(TenantTransactionExecutor tx,HerdAnimalProfileRepository animals,AnimalEventRepository events,Clock clock){this.tx=tx;this.animals=animals;this.events=events;this.clock=clock;}
- public HerdAnimalSummary sale(TenantContext c,UUID id,LifecycleCurrentFarmAnimalCommand x){return execute(c,id,x,AnimalEventType.SOLD,Set.of("OWNER","ADMIN","MANAGER"));}
- public HerdAnimalSummary death(TenantContext c,UUID id,LifecycleCurrentFarmAnimalCommand x){return execute(c,id,x,AnimalEventType.DECEASED,Set.of("OWNER","ADMIN","MANAGER","OPERATOR"));}
- private HerdAnimalSummary execute(TenantContext c,UUID id,LifecycleCurrentFarmAnimalCommand x,AnimalEventType type,Set<String> roles){if(!roles.contains(c.role()))throw new HerdLifecycleForbiddenException(); Valid v=valid(x);return tx.execute(c,()->run(c,id,v,type));}
- private HerdAnimalSummary run(TenantContext c,UUID id,Valid v,AnimalEventType type){events.lockOperation(c.tenantId(),c.farmId(),v.operationId);Optional<AnimalEvent> prior=events.findByOperation(c.tenantId(),c.farmId(),v.operationId);if(prior.isPresent()){AnimalEvent e=prior.get();if(!e.animalId().equals(id)||e.type()!=type||!Objects.equals(e.occurredOn(),v.occurredOn)||!(e.details() instanceof LifecycleEventDetails details)||!Objects.equals(details.notes(),v.notes)||e.resultingVersion()-1!=v.expectedVersion)throw new HerdOperationIdempotencyConflictException();return animals.findById(c.tenantId(),c.farmId(),id).filter(a->a.version()==e.resultingVersion()).orElseThrow(HerdOperationIdempotencyConflictException::new);} HerdAnimalSummary current=animals.findByIdForCorrection(c.tenantId(),c.farmId(),id).orElseThrow(HerdAnimalNotFoundException::new);if(current.birthDate()!=null&&v.occurredOn.isBefore(current.birthDate()))throw new HerdAnimalCommandInvalidException();if(current.version()!=v.expectedVersion)throw new HerdAnimalVersionConflictException();if(current.status()!=HerdAnimalStatus.ACTIVE)throw new HerdLifecycleConflictException();HerdAnimalStatus status=type==AnimalEventType.SOLD?HerdAnimalStatus.SOLD:HerdAnimalStatus.DECEASED;HerdAnimalSummary updated=animals.updateStatus(c.tenantId(),c.farmId(),id,v.expectedVersion,status).orElseThrow(HerdAnimalVersionConflictException::new);events.record(c.tenantId(),c.farmId(),id,type,v.operationId,c.userId(),v.occurredOn,updated.version(),new LifecycleEventDetails(v.notes));return updated;}
- private Valid valid(LifecycleCurrentFarmAnimalCommand x){if(x==null||x.operationId()==null||x.expectedVersion()==null||x.expectedVersion()<0||x.occurredOn()==null||x.occurredOn().isAfter(LocalDate.now(clock)))throw new HerdAnimalCommandInvalidException();String n=x.notes()==null?null:PosixEdgeWhitespace.trim(x.notes());if(n!=null&&(n.isEmpty()||n.indexOf('\0')>=0||n.codePointCount(0,n.length())>1000))throw new HerdAnimalCommandInvalidException();return new Valid(x.operationId(),x.expectedVersion(),x.occurredOn(),n);}
- private record Valid(UUID operationId,long expectedVersion,LocalDate occurredOn,String notes){}
+
+import com.gerenciadorrural.modules.herd.domain.*;
+import com.gerenciadorrural.shared.tenancy.TenantContext;
+import com.gerenciadorrural.shared.tenancy.TenantTransactionExecutor;
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import org.springframework.stereotype.Service;
+
+@Service
+public class LifecycleCurrentFarmAnimal {
+  private final TenantTransactionExecutor transactions;
+  private final HerdAnimalProfileRepository animals;
+  private final AnimalEventRepository events;
+  private final Clock clock;
+
+  public LifecycleCurrentFarmAnimal(TenantTransactionExecutor transactions,
+      HerdAnimalProfileRepository animals, AnimalEventRepository events, Clock clock) {
+    this.transactions = transactions;
+    this.animals = animals;
+    this.events = events;
+    this.clock = clock;
+  }
+
+  public HerdAnimalSummary sale(TenantContext context, UUID animalId,
+      LifecycleCurrentFarmAnimalCommand command) {
+    return execute(context, animalId, command, AnimalEventType.SOLD,
+        Set.of("OWNER", "ADMIN", "MANAGER"));
+  }
+
+  public HerdAnimalSummary death(TenantContext context, UUID animalId,
+      LifecycleCurrentFarmAnimalCommand command) {
+    return execute(context, animalId, command, AnimalEventType.DECEASED,
+        Set.of("OWNER", "ADMIN", "MANAGER", "OPERATOR"));
+  }
+
+  private HerdAnimalSummary execute(TenantContext context, UUID animalId,
+      LifecycleCurrentFarmAnimalCommand command, AnimalEventType type, Set<String> roles) {
+    if (!roles.contains(context.role())) {
+      throw new HerdLifecycleForbiddenException();
+    }
+    Valid valid = valid(command, type);
+    return transactions.execute(context, () -> run(context, animalId, valid, type));
+  }
+
+  private HerdAnimalSummary run(TenantContext context, UUID animalId, Valid valid,
+      AnimalEventType type) {
+    events.lockOperation(context.tenantId(), context.farmId(), valid.operationId());
+    var prior = events.findByOperation(context.tenantId(), context.farmId(), valid.operationId());
+    if (prior.isPresent()) {
+      AnimalEvent event = prior.get();
+      if (!event.animalId().equals(animalId) || event.type() != type
+          || !Objects.equals(event.occurredOn(), valid.occurredOn())
+          || !Objects.equals(event.details(), valid.details())
+          || event.resultingVersion() - 1 != valid.expectedVersion()) {
+        throw new HerdOperationIdempotencyConflictException();
+      }
+      return animals.findById(context.tenantId(), context.farmId(), animalId)
+          .filter(animal -> animal.version() == event.resultingVersion())
+          .orElseThrow(HerdOperationIdempotencyConflictException::new);
+    }
+    HerdAnimalSummary current = animals.findByIdForCorrection(
+        context.tenantId(), context.farmId(), animalId).orElseThrow(HerdAnimalNotFoundException::new);
+    if (current.birthDate() != null && valid.occurredOn().isBefore(current.birthDate())) {
+      throw new HerdAnimalCommandInvalidException();
+    }
+    if (current.version() != valid.expectedVersion()) {
+      throw new HerdAnimalVersionConflictException();
+    }
+    if (current.status() != HerdAnimalStatus.ACTIVE) {
+      throw new HerdLifecycleConflictException();
+    }
+    HerdAnimalStatus status = type == AnimalEventType.SOLD
+        ? HerdAnimalStatus.SOLD : HerdAnimalStatus.DECEASED;
+    HerdAnimalSummary updated = animals.updateStatus(context.tenantId(), context.farmId(),
+        animalId, valid.expectedVersion(), status).orElseThrow(HerdAnimalVersionConflictException::new);
+    events.record(context.tenantId(), context.farmId(), animalId, type, valid.operationId(),
+        context.userId(), valid.occurredOn(), updated.version(), valid.details());
+    return updated;
+  }
+
+  private Valid valid(LifecycleCurrentFarmAnimalCommand command, AnimalEventType type) {
+    if (command == null || command.operationId() == null || command.expectedVersion() == null
+        || command.expectedVersion() < 0 || command.occurredOn() == null
+        || command.occurredOn().isAfter(LocalDate.now(clock))) {
+      throw new HerdAnimalCommandInvalidException();
+    }
+    String notes = text(command.notes(), 1000);
+    String deathReason = text(command.deathReason(), 240);
+    String saleBuyer = text(command.saleBuyer(), 240);
+    BigDecimal saleAmount = command.saleAmount();
+    if (saleAmount != null && (saleAmount.signum() <= 0 || saleAmount.scale() > 2
+        || saleAmount.precision() > 19)) {
+      throw new HerdAnimalCommandInvalidException();
+    }
+    if (type == AnimalEventType.SOLD && deathReason != null
+        || type == AnimalEventType.DECEASED && (command.saleChannel() != null
+            || saleBuyer != null || saleAmount != null)) {
+      throw new HerdAnimalCommandInvalidException();
+    }
+    return new Valid(command.operationId(), command.expectedVersion(), command.occurredOn(),
+        new LifecycleEventDetails(notes, deathReason, command.saleChannel(), saleBuyer,
+            saleAmount == null ? null : saleAmount.stripTrailingZeros()));
+  }
+
+  private static String text(String value, int max) {
+    if (value == null) {
+      return null;
+    }
+    String normalized = PosixEdgeWhitespace.trim(value);
+    if (normalized.isEmpty() || normalized.indexOf('\0') >= 0
+        || normalized.codePointCount(0, normalized.length()) > max) {
+      throw new HerdAnimalCommandInvalidException();
+    }
+    return normalized;
+  }
+
+  private record Valid(UUID operationId, long expectedVersion, LocalDate occurredOn,
+      LifecycleEventDetails details) {}
 }

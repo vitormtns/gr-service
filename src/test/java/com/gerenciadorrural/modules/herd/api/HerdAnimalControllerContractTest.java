@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.gerenciadorrural.modules.herd.application.ListCurrentFarmAnimals;
 import com.gerenciadorrural.modules.herd.application.CreateCurrentFarmAnimal;
+import com.gerenciadorrural.modules.herd.application.LifecycleCurrentFarmAnimal;
+import com.gerenciadorrural.modules.herd.application.LifecycleCurrentFarmAnimalCommand;
+import com.gerenciadorrural.modules.herd.domain.SaleChannel;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalPage;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalQuery;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSex;
@@ -26,6 +29,7 @@ import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.method.support.ModelAndViewContainer;
 
 import java.time.LocalDate;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -37,8 +41,11 @@ import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -59,6 +66,40 @@ class HerdAnimalControllerContractTest {
     private ListCurrentFarmAnimals listCurrentFarmAnimals;
     private CreateCurrentFarmAnimal createCurrentFarmAnimal;
     private MockMvc mvc;
+
+    @Test
+    void acceptsStructuredSaleFieldsAndRejectsUnknownLifecycleFields() throws Exception {
+        LifecycleCurrentFarmAnimal lifecycle = mock(LifecycleCurrentFarmAnimal.class);
+        ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        MockMvc lifecycleMvc = standaloneSetup(new HerdAnimalController(null, null, null, null, lifecycle, null))
+            .setControllerAdvice(new HerdAnimalExceptionHandler())
+            .setCustomArgumentResolvers(new TenantContextArgumentResolver())
+            .setMessageConverters(new MappingJackson2HttpMessageConverter(mapper))
+            .build();
+        UUID animalId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        when(lifecycle.sale(any(), eq(animalId), any())).thenReturn(new HerdAnimalSummary(
+            animalId, "A-1", "Brisa", HerdAnimalSex.FEMALE,
+            LocalDate.of(2024, 1, 1), HerdAnimalStatus.SOLD, 1));
+        String body = "{\"operationId\":\"" + operationId
+            + "\",\"expectedVersion\":0,\"occurredOn\":\"2026-09-08\","
+            + "\"saleChannel\":\"AUCTION\",\"saleBuyer\":\"Comprador\",\"saleAmount\":1200.50}";
+        lifecycleMvc.perform(post("/api/v1/herd/animals/{id}/sale", animalId)
+                .contentType("application/json").content(body))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("SOLD"));
+        verify(lifecycle).sale(eq(tenantContext), eq(animalId), eq(
+            new LifecycleCurrentFarmAnimalCommand(operationId, 0L,
+                LocalDate.of(2026, 9, 8), null, null, SaleChannel.AUCTION,
+                "Comprador", new BigDecimal("1200.50"))));
+        lifecycleMvc.perform(post("/api/v1/herd/animals/{id}/sale", animalId)
+                .contentType("application/json").content(body.replace("saleBuyer", "unknown")))
+            .andExpect(status().isBadRequest());
+        lifecycleMvc.perform(post("/api/v1/herd/animals/{id}/sale", animalId)
+                .contentType("application/json")
+                .content(body.replace("\"saleAmount\":1200.50", "\"saleAmount\":1200.50,\"saleAmount\":1")))
+            .andExpect(status().isBadRequest());
+    }
 
     @BeforeEach
     void setUp() {

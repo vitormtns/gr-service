@@ -70,6 +70,29 @@ class HerdReportControllerContractTest {
   }
 
   @Test
+  void exposesCurrentBalanceWithoutClaimingHistoricalOrOfficialState() throws Exception {
+    when(repository.currentAgeSexCounts(any(), any())).thenReturn(List.of(
+        new AgeSexCount(HerdAnimalSex.FEMALE, LocalDate.of(2026, 6, 13), 2),
+        new AgeSexCount(HerdAnimalSex.MALE, null, 1),
+        new AgeSexCount(HerdAnimalSex.MALE, LocalDate.of(2024, 1, 1), 3)));
+
+    mvc.perform(get("/api/v1/herd/reports/current-age-sex-balance?referenceDate=2026-09-13"))
+        .andExpect(status().isOk())
+        .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+        .andExpect(jsonPath("$.positionSemantics").value("CURRENT_STATE_AGED_AT_REFERENCE"))
+        .andExpect(jsonPath("$.totalActiveAnimals").value(6))
+        .andExpect(jsonPath("$.unknownBirthDate").value(1))
+        .andExpect(jsonPath("$.cells[3].ageBand").value("MONTHS_3_8"))
+        .andExpect(jsonPath("$.cells[3].sex").value("FEMALE"))
+        .andExpect(jsonPath("$.cells[3].count").value(2));
+
+    mvc.perform(get("/api/v1/herd/reports/current-age-sex-balance?referenceDate=2026-09-14"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/herd/reports/current-age-sex-balance?unknown=true"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void rejectsMalformedUnknownRepeatedAndOutOfRangeFilters() throws Exception {
     List<MockHttpServletRequestBuilder> invalid =
         List.of(
