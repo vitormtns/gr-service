@@ -83,6 +83,7 @@ public final class PostgresTestEnvironment {
                         app.animal_health_treatment_retractions,
                         app.animal_health_treatments,
                         app.animal_weight_measurements,
+                        app.animal_milk_records,
                         app.herd_management_operations,
                         app.herd_movements,
                         app.herd_movement_operations,
