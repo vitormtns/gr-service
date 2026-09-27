@@ -226,6 +226,7 @@ public class ReadHerdReports {
       LocalDate from,
       LocalDate to,
       HealthTreatmentType treatmentType,
+      HealthProcedureCode procedureCode,
       UUID animalId,
       int page,
       int size) {
@@ -241,6 +242,7 @@ public class ReadHerdReports {
                 range.from(),
                 range.to(),
                 treatmentType,
+                procedureCode,
                 animalId,
                 size,
                 offset(page, size)));

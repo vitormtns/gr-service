@@ -112,6 +112,19 @@ class HerdReportControllerContractTest {
   }
 
   @Test
+  void filtersEffectiveHealthFactsByStructuredProcedure() throws Exception {
+    when(repository.health(eq(context.tenantId()), eq(context.farmId()), any(), any(),
+        eq(HealthTreatmentType.VACCINATION), eq(HealthProcedureCode.FOOT_AND_MOUTH_DISEASE),
+        isNull(), eq(20), eq(0L)))
+        .thenReturn(new ReportPage<>(new HealthSummary(0, 0, Map.of()), List.of(), 0));
+    mvc.perform(get("/api/v1/herd/reports/health?treatmentType=VACCINATION&procedureCode=FOOT_AND_MOUTH_DISEASE"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.summary.treatmentsCount").value(0));
+    mvc.perform(get("/api/v1/herd/reports/health?procedureCode=UNKNOWN"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void rejectsMalformedUnknownRepeatedAndOutOfRangeFilters() throws Exception {
     List<MockHttpServletRequestBuilder> invalid =
         List.of(

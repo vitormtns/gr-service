@@ -388,12 +388,14 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
       LocalDate from,
       LocalDate to,
       HealthTreatmentType type,
+      HealthProcedureCode procedureCode,
       UUID animal,
       int limit,
       long offset) {
     MapSqlParameterSource p =
         dated(tenant, farm, from, to)
             .addValue("type", type == null ? null : type.name())
+            .addValue("procedureCode", procedureCode == null ? null : procedureCode.name())
             .addValue("animal", animal)
             .addValue("limit", limit)
             .addValue("offset", offset);
@@ -401,7 +403,11 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
         """
          where h.tenant_id=:tenant and h.farm_id=:farm and h.occurred_on between :from and :to
            and (cast(:type as text) is null or h.treatment_type=:type)
+           and (cast(:procedureCode as text) is null or h.procedure_code=:procedureCode)
            and (cast(:animal as uuid) is null or h.animal_id=:animal)
+           and not exists (select 1 from app.animal_health_treatment_retractions r
+                            where r.tenant_id=h.tenant_id and r.farm_id=h.farm_id
+                              and r.treatment_id=h.id)
         """;
     long total = number("select count(*) from app.animal_health_treatments h" + where, p);
     long animals =
@@ -423,7 +429,7 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
         jdbc.query(
             HISTORICAL_SNAPSHOTS
                 + """
-                select h.id,h.animal_id,s.identification,s.name,h.treatment_type,h.occurred_on,
+                select h.id,h.animal_id,s.identification,s.name,h.treatment_type,h.procedure_code,h.occurred_on,
                        h.recorded_at,h.product,h.protocol,h.next_due_on
                   from app.animal_health_treatments h left join snapshots s on s.animal_id=h.animal_id
                 """
@@ -435,12 +441,19 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
                     rs.getObject("id", UUID.class),
                     animal(rs, "animal_id", "identification", "name"),
                     HealthTreatmentType.valueOf(rs.getString("treatment_type")),
+                    rs.getString("procedure_code") == null ? null
+                        : HealthProcedureCode.valueOf(rs.getString("procedure_code")),
                     rs.getObject("occurred_on", LocalDate.class),
                     instant(rs, "recorded_at"),
                     rs.getString("product"),
                     rs.getString("protocol"),
                     rs.getObject("next_due_on", LocalDate.class)));
     return new ReportPage<>(new HealthSummary(total, animals, counts), items, total);
+  }
+
+  public ReportPage<HealthSummary, HealthItem> health(TenantId tenant, UUID farm, LocalDate from,
+      LocalDate to, HealthTreatmentType type, UUID animal, int limit, long offset) {
+    return health(tenant, farm, from, to, type, null, animal, limit, offset);
   }
 
   @Override

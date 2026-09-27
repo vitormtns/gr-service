@@ -131,12 +131,13 @@ public class HerdReportController {
       @RequestParam(required = false) LocalDate from,
       @RequestParam(required = false) LocalDate to,
       @RequestParam(required = false) HealthTreatmentType treatmentType,
+      @RequestParam(required = false) HealthProcedureCode procedureCode,
       @RequestParam(required = false) UUID animalId,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size,
       HttpServletRequest request) {
-    parameters(request, "from", "to", "treatmentType", "animalId", "page", "size");
-    return ok(reports.health(context, from, to, treatmentType, animalId, page, size));
+    parameters(request, "from", "to", "treatmentType", "procedureCode", "animalId", "page", "size");
+    return ok(reports.health(context, from, to, treatmentType, procedureCode, animalId, page, size));
   }
 
   @GetMapping("/reproduction")

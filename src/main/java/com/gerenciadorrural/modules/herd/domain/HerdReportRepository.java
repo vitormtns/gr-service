@@ -71,6 +71,7 @@ public interface HerdReportRepository {
       LocalDate from,
       LocalDate to,
       HealthTreatmentType treatmentType,
+      HealthProcedureCode procedureCode,
       UUID animalId,
       int limit,
       long offset);
@@ -209,6 +210,7 @@ public interface HerdReportRepository {
       UUID id,
       AnimalReference animal,
       HealthTreatmentType treatmentType,
+      HealthProcedureCode procedureCode,
       LocalDate occurredOn,
       Instant recordedAt,
       String product,

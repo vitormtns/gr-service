@@ -46,6 +46,32 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
   }
 
   @Test
+  void healthReportFiltersStructuredProcedureAndOmitsRetractedFacts() throws Exception {
+    Fixture fixture = fixture();
+    UUID treatment = UUID.randomUUID();
+    executeAsAdmin("insert into app.animal_health_treatments(id,tenant_id,farm_id,animal_id,operation_id,treatment_type,procedure_code,occurred_on) values(?,?,?,?,?,'VACCINATION','FOOT_AND_MOUTH_DISEASE','2026-02-01')",
+        treatment, fixture.tenant(), fixture.farm(), fixture.activeFemale(), UUID.randomUUID());
+    try (Connection connection = adminConnection()) {
+      var report = repository(connection).health(tenant(fixture), fixture.farm(), FROM, TO,
+          HealthTreatmentType.VACCINATION, HealthProcedureCode.FOOT_AND_MOUTH_DISEASE,
+          null, 20, 0);
+      assertThat(report.summary().treatmentsCount()).isOne();
+      assertThat(report.items()).singleElement().satisfies(item -> {
+        assertThat(item.procedureCode()).isEqualTo(HealthProcedureCode.FOOT_AND_MOUTH_DISEASE);
+        assertThat(item.nextDueOn()).isNull();
+      });
+    }
+    executeAsAdmin("insert into app.animal_health_treatment_retractions(id,tenant_id,farm_id,animal_id,treatment_id,operation_id) values(?,?,?,?,?,?)",
+        UUID.randomUUID(), fixture.tenant(), fixture.farm(), fixture.activeFemale(), treatment,
+        UUID.randomUUID());
+    try (Connection connection = adminConnection()) {
+      assertThat(repository(connection).health(tenant(fixture), fixture.farm(), FROM, TO,
+          HealthTreatmentType.VACCINATION, HealthProcedureCode.FOOT_AND_MOUTH_DISEASE,
+          null, 20, 0).summary().treatmentsCount()).isZero();
+    }
+  }
+
+  @Test
   void groupsCurrentActiveAnimalsBySexAndBirthDateWithinFarmAndTenant() throws Exception {
     Fixture f = fixture();
     try (Connection connection = adminConnection()) {
