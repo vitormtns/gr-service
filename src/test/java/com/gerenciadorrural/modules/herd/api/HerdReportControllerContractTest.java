@@ -109,6 +109,28 @@ class HerdReportControllerContractTest {
   }
 
   @Test
+  void reportsRecordedProcedureCoverageWithoutCallingItCompliance() throws Exception {
+    when(repository.currentProcedureAgeSexCounts(context.tenantId(), context.farmId(),
+        HealthProcedureCode.BRUCELLOSIS)).thenReturn(List.of(
+            new ProcedureAgeSexCount(HerdAnimalSex.FEMALE, LocalDate.of(2026, 4, 1), true, 1),
+            new ProcedureAgeSexCount(HerdAnimalSex.FEMALE, LocalDate.of(2026, 4, 1), false, 2)));
+    mvc.perform(get("/api/v1/herd/reports/current-procedure-coverage"
+            + "?procedureCode=BRUCELLOSIS&referenceDate=2026-09-13"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.positionSemantics")
+            .value("CURRENT_STATE_AGED_AT_REFERENCE_EFFECTIVE_RECORDED_TREATMENTS"))
+        .andExpect(jsonPath("$.totalActiveAnimals").value(3))
+        .andExpect(jsonPath("$.withRecordedTreatment").value(1))
+        .andExpect(jsonPath("$.withoutRecordedTreatment").value(2));
+    mvc.perform(get("/api/v1/herd/reports/current-procedure-coverage?procedureCode=BRUCELLOSIS"
+            + "&referenceDate=2026-09-14"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/herd/reports/current-procedure-coverage?procedureCode=BRUCELLOSIS"
+            + "&tenantId=" + UUID.randomUUID()))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void exposesPeriodEventReconciliationWithExplicitSemantics() throws Exception {
     LocalDate from = LocalDate.of(2026, 9, 1);
     LocalDate to = LocalDate.of(2026, 9, 13);

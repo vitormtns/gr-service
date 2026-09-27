@@ -24,6 +24,9 @@ public interface HerdReportRepository {
 
   List<AgeSexCount> historicalAgeSexCounts(TenantId tenantId, UUID farmId, LocalDate asOf);
 
+  List<ProcedureAgeSexCount> currentProcedureAgeSexCounts(TenantId tenantId, UUID farmId,
+      HealthProcedureCode procedureCode);
+
   EventLedger eventLedger(TenantId tenantId, UUID farmId, LocalDate from, LocalDate to);
 
   ReportPage<LifecycleSummary, LifecycleItem> lifecycle(
@@ -133,6 +136,9 @@ public interface HerdReportRepository {
   record PaddockTotal(PaddockReference paddock, long total) {}
 
   record AgeSexCount(HerdAnimalSex sex, LocalDate birthDate, long count) {}
+
+  record ProcedureAgeSexCount(HerdAnimalSex sex, LocalDate birthDate,
+      boolean withRecordedTreatment, long count) {}
 
   record EventLedger(long openingAnimals, long registeredAnimals, long births,
       long transfersIn, long sales, long deaths, long transfersOut, long closingAnimals) {}

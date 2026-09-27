@@ -74,6 +74,34 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
   }
 
   @Override
+  public List<ProcedureAgeSexCount> currentProcedureAgeSexCounts(TenantId tenant, UUID farm,
+      HealthProcedureCode code) {
+    return jdbc.query("""
+        with per_animal as (
+        select a.sex, a.birth_date,
+               exists (
+                 select 1 from app.animal_health_treatments h
+                  where h.tenant_id = a.tenant_id and h.farm_id = a.farm_id
+                    and h.animal_id = a.id and h.treatment_type = 'VACCINATION'
+                    and h.procedure_code = :code
+                    and not exists (select 1 from app.animal_health_treatment_retractions r
+                                     where r.tenant_id = h.tenant_id and r.farm_id = h.farm_id
+                                       and r.treatment_id = h.id)
+               ) with_recorded_treatment
+          from app.animals a
+         where a.tenant_id = :tenant and a.farm_id = :farm and a.status = 'ACTIVE'
+        )
+        select sex, birth_date, with_recorded_treatment, count(*) total
+          from per_animal
+         group by sex, birth_date, with_recorded_treatment
+         order by sex, birth_date, with_recorded_treatment
+        """, base(tenant, farm).addValue("code", code.name()), (rs, row) ->
+            new ProcedureAgeSexCount(HerdAnimalSex.valueOf(rs.getString("sex")),
+                rs.getObject("birth_date", LocalDate.class),
+                rs.getBoolean("with_recorded_treatment"), rs.getLong("total")));
+  }
+
+  @Override
   public EventLedger eventLedger(TenantId tenant, UUID farm, LocalDate from, LocalDate to) {
     MapSqlParameterSource parameters = base(tenant, farm).addValue("from", from).addValue("to", to);
     return jdbc.queryForObject("""

@@ -45,6 +45,14 @@ public class HerdReportController {
     return ok(reports.historicalAgeSexBalance(context, asOf));
   }
 
+  @GetMapping("/current-procedure-coverage")
+  ResponseEntity<?> currentProcedureCoverage(@ResolvedTenantContext TenantContext context,
+      @RequestParam HealthProcedureCode procedureCode,
+      @RequestParam(required = false) LocalDate referenceDate, HttpServletRequest request) {
+    parameters(request, "procedureCode", "referenceDate");
+    return ok(reports.currentProcedureCoverage(context, procedureCode, referenceDate));
+  }
+
   @GetMapping("/herd-position")
   ResponseEntity<?> herdPosition(
       @ResolvedTenantContext TenantContext context,

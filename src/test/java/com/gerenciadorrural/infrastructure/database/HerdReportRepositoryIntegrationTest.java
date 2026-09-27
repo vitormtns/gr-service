@@ -56,6 +56,10 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
           HealthTreatmentType.VACCINATION, HealthProcedureCode.FOOT_AND_MOUTH_DISEASE,
           null, 20, 0);
       assertThat(report.summary().treatmentsCount()).isOne();
+      assertThat(repository(connection).currentProcedureAgeSexCounts(tenant(fixture), fixture.farm(),
+          HealthProcedureCode.FOOT_AND_MOUTH_DISEASE))
+          .extracting(ProcedureAgeSexCount::withRecordedTreatment)
+          .containsExactlyInAnyOrder(true, false);
       assertThat(report.items()).singleElement().satisfies(item -> {
         assertThat(item.procedureCode()).isEqualTo(HealthProcedureCode.FOOT_AND_MOUTH_DISEASE);
         assertThat(item.nextDueOn()).isNull();
@@ -68,6 +72,9 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
       assertThat(repository(connection).health(tenant(fixture), fixture.farm(), FROM, TO,
           HealthTreatmentType.VACCINATION, HealthProcedureCode.FOOT_AND_MOUTH_DISEASE,
           null, 20, 0).summary().treatmentsCount()).isZero();
+      assertThat(repository(connection).currentProcedureAgeSexCounts(tenant(fixture), fixture.farm(),
+          HealthProcedureCode.FOOT_AND_MOUTH_DISEASE))
+          .allSatisfy(row -> assertThat(row.withRecordedTreatment()).isFalse());
     }
   }
 

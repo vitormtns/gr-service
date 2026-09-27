@@ -66,6 +66,43 @@ public class ReadHerdReports {
         reports.historicalAgeSexCounts(context.tenantId(), context.farmId(), asOf)));
   }
 
+  public ProcedureCoverage currentProcedureCoverage(TenantContext context,
+      HealthProcedureCode procedureCode, LocalDate referenceDate) {
+    validateRole(context);
+    LocalDate reference = referenceDate == null ? LocalDate.now(clock) : referenceDate;
+    if (procedureCode == null || reference.isAfter(LocalDate.now(clock)))
+      throw new HerdReportQueryInvalidException();
+    return transactions.execute(context, () -> {
+      Map<AgeBand, Map<HerdAnimalSex, long[]>> counts = new EnumMap<>(AgeBand.class);
+      for (AgeBand band : AgeBand.values()) {
+        Map<HerdAnimalSex, long[]> bySex = new EnumMap<>(HerdAnimalSex.class);
+        for (HerdAnimalSex sex : HerdAnimalSex.values()) bySex.put(sex, new long[2]);
+        counts.put(band, bySex);
+      }
+      long total = 0, recorded = 0, unknownBirth = 0;
+      for (ProcedureAgeSexCount row : reports.currentProcedureAgeSexCounts(
+          context.tenantId(), context.farmId(), procedureCode)) {
+        total += row.count();
+        if (row.withRecordedTreatment()) recorded += row.count();
+        if (row.birthDate() == null || row.birthDate().isAfter(reference)) {
+          unknownBirth += row.count();
+          continue;
+        }
+        long[] values = counts.get(AgePolicy.classify(row.birthDate(), reference)).get(row.sex());
+        values[row.withRecordedTreatment() ? 0 : 1] += row.count();
+      }
+      List<ProcedureCoverageCell> cells = new ArrayList<>();
+      for (AgeBand band : AgeBand.values())
+        for (HerdAnimalSex sex : HerdAnimalSex.values()) {
+          long[] values = counts.get(band).get(sex);
+          cells.add(new ProcedureCoverageCell(band, sex, values[0], values[1]));
+        }
+      return new ProcedureCoverage(procedureCode, reference,
+          "CURRENT_STATE_AGED_AT_REFERENCE_EFFECTIVE_RECORDED_TREATMENTS",
+          total, recorded, total - recorded, unknownBirth, List.copyOf(cells));
+    });
+  }
+
   private AgeSexBalance balance(LocalDate reference, String semantics, List<AgeSexCount> rows) {
       Map<AgeBand, Map<HerdAnimalSex, Long>> counts = new EnumMap<>(AgeBand.class);
       for (AgeBand band : AgeBand.values()) {
@@ -378,6 +415,13 @@ public class ReadHerdReports {
 
   public record AgeSexBalance(LocalDate referenceDate, String positionSemantics,
       long totalActiveAnimals, long unknownBirthDate, List<AgeSexCell> cells) {}
+
+  public record ProcedureCoverageCell(AgeBand ageBand, HerdAnimalSex sex,
+      long withRecordedTreatment, long withoutRecordedTreatment) {}
+
+  public record ProcedureCoverage(HealthProcedureCode procedureCode, LocalDate referenceDate,
+      String positionSemantics, long totalActiveAnimals, long withRecordedTreatment,
+      long withoutRecordedTreatment, long unknownBirthDate, List<ProcedureCoverageCell> cells) {}
 
   public record PeriodReconciliation(LocalDate from, LocalDate to, String positionSemantics,
       EventLedger balance) {}
