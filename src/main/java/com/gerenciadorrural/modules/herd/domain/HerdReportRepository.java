@@ -149,7 +149,9 @@ public interface HerdReportRepository {
       LocalDate birthDate,
       PaddockReference paddock) {}
 
-  record LifecycleSummary(Map<LifecycleEvent, Long> countsByEventType, long totalAffectedAnimals) {}
+  record LifecycleSummary(Map<LifecycleEvent, Long> countsByEventType,
+      long totalAffectedAnimals, BigDecimal totalSaleAmount, BigDecimal averageSaleAmount,
+      long salesWithAmount) {}
 
   record LifecycleItem(
       UUID id,

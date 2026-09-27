@@ -188,6 +188,16 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
     long affected =
         number("select count(distinct e.animal_id) from app.animal_events e" + where, p);
     long total = number("select count(*) from app.animal_events e" + where, p);
+    BigDecimal[] saleValues = jdbc.queryForObject(
+        "select coalesce(sum((e.payload->>'saleAmount')::numeric) filter (where e.event_type='SOLD' and e.payload->>'saleAmount' is not null),0) total_amount,"
+            + " count(*) filter (where e.event_type='SOLD' and e.payload->>'saleAmount' is not null) priced_sales from app.animal_events e"
+            + where, p, (rs, row) -> new BigDecimal[] {rs.getBigDecimal("total_amount"),
+                BigDecimal.valueOf(rs.getLong("priced_sales"))});
+    BigDecimal totalSaleAmount = saleValues[0];
+    long salesWithAmount = saleValues[1].longValueExact();
+    BigDecimal averageSaleAmount = salesWithAmount == 0 ? null
+        : totalSaleAmount.divide(BigDecimal.valueOf(salesWithAmount), 2,
+            java.math.RoundingMode.HALF_UP);
     List<LifecycleItem> items =
         jdbc.query(
             HISTORICAL_SNAPSHOTS
@@ -217,7 +227,8 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
                     rs.getString("sale_buyer"),
                     rs.getString("sale_amount") == null ? null
                         : new BigDecimal(rs.getString("sale_amount"))));
-    return new ReportPage<>(new LifecycleSummary(counts, affected), items, total);
+    return new ReportPage<>(new LifecycleSummary(counts, affected, totalSaleAmount,
+        averageSaleAmount, salesWithAmount), items, total);
   }
 
   @Override

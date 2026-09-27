@@ -119,6 +119,9 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
           .containsEntry(LifecycleEvent.SOLD, 1L)
           .containsEntry(LifecycleEvent.DECEASED, 1L);
       assertThat(lifecycle.summary().totalAffectedAnimals()).isEqualTo(4);
+      assertThat(lifecycle.summary().totalSaleAmount()).isEqualByComparingTo("1200.50");
+      assertThat(lifecycle.summary().averageSaleAmount()).isEqualByComparingTo("1200.50");
+      assertThat(lifecycle.summary().salesWithAmount()).isOne();
       assertThat(lifecycle.totalElements()).isEqualTo(7);
       assertThat(lifecycle.items()).filteredOn(item -> item.event() == LifecycleEvent.SOLD)
           .singleElement().satisfies(item -> {
