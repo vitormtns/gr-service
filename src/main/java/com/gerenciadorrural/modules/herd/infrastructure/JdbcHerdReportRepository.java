@@ -106,11 +106,15 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
     MapSqlParameterSource parameters = base(tenant, farm).addValue("from", from).addValue("to", to);
     return jdbc.queryForObject("""
         with flow as (
-          select event_type,coalesce(occurred_on,recorded_at::date) effective_on
-            from app.animal_events
-           where tenant_id=:tenant and farm_id=:farm
-             and event_type in ('CREATED','BORN','TRANSFERRED_IN','SOLD','DECEASED','TRANSFERRED_OUT')
-             and (occurred_on<=:to or (occurred_on is null and recorded_at::date<=:to))
+          select e.event_type,coalesce(e.occurred_on,e.recorded_at::date) effective_on
+            from app.animal_events e
+           where e.tenant_id=:tenant and e.farm_id=:farm
+             and e.event_type in ('CREATED','BORN','TRANSFERRED_IN','SOLD','DECEASED','TRANSFERRED_OUT')
+             and (e.occurred_on<=:to or (e.occurred_on is null and e.recorded_at::date<=:to))
+             and (e.event_type <> 'CREATED' or not exists (
+               select 1 from app.animal_events birth
+                where birth.tenant_id=e.tenant_id and birth.farm_id=e.farm_id
+                  and birth.animal_id=e.animal_id and birth.event_type='BORN'))
         )
         select
           count(*) filter (where effective_on<:from and event_type in ('CREATED','BORN','TRANSFERRED_IN'))

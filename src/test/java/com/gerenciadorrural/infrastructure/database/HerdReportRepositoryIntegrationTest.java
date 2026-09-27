@@ -28,6 +28,7 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
     event(fixture, fixture.sold(), "CREATED", LocalDate.of(2026, 2, 1), null, "{}");
     event(fixture, fixture.sold(), "SOLD", LocalDate.of(2026, 2, 2), UUID.randomUUID(), "{}");
     event(fixture, fixture.deceased(), "BORN", LocalDate.of(2026, 2, 3), UUID.randomUUID(), "{}");
+    event(fixture, fixture.deceased(), "CREATED", LocalDate.of(2026, 2, 3), null, "{}");
     event(fixture, fixture.deceased(), "DECEASED", LocalDate.of(2026, 2, 4), UUID.randomUUID(), "{}");
     try (Connection connection = adminConnection()) {
       EventLedger ledger = repository(connection).eventLedger(tenant(fixture), fixture.farm(),

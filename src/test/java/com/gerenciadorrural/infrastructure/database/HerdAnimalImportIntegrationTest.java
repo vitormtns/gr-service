@@ -32,6 +32,7 @@ class HerdAnimalImportIntegrationTest extends PostgresMigrationTestSupport {
     private CorrectCurrentFarmAnimalMother motherCorrections;
     private BatchBreedCurrentFarmAnimals breedingBatches;
     private JdbcHerdBreedingBatchRepository breedingRepository;
+    private RecordCurrentFarmAnimalNote notes;
     private TenantContext context;
     private UUID farmId;
     private UUID tenantId;
@@ -73,6 +74,8 @@ class HerdAnimalImportIntegrationTest extends PostgresMigrationTestSupport {
                 events, new ObjectMapper().findAndRegisterModules(), Clock.systemUTC(), 283);
         breedingRepository = new JdbcHerdBreedingBatchRepository(named);
         breedingBatches = new BatchBreedCurrentFarmAnimals(transactions, reproduction, breedingRepository);
+        notes = new RecordCurrentFarmAnimalNote(transactions, new JdbcHerdAnimalProfileRepository(named),
+                events, Clock.systemUTC());
         UUID userId = UUID.randomUUID();
         tenantId = UUID.randomUUID();
         farmId = UUID.randomUUID();
@@ -253,6 +256,25 @@ class HerdAnimalImportIntegrationTest extends PostgresMigrationTestSupport {
                 .isInstanceOf(HerdLifecycleConflictException.class);
         assertThat(count("app.animal_pregnancies")).isZero();
         assertThat(count("app.herd_breeding_batches")).isZero();
+        assertThat(count("app.animal_events")).isEqualTo(2);
+    }
+
+    @Test
+    void recordsFreeAnimalNoteWithHistoryVersionAndIdempotentReplay() throws Exception {
+        UUID animal = UUID.randomUUID();
+        importer.execute(context, UUID.randomUUID(), List.of(
+                row(animal, "A-1", HerdAnimalSex.FEMALE, LocalDate.of(2020, 1, 1), null)));
+        UUID operation = UUID.randomUUID();
+        LocalDate occurred = LocalDate.of(2026, 1, 1);
+        var recorded = notes.execute(context, animal, operation, 0L, occurred, "  Observação do manejo  ");
+        assertThat(recorded.notes()).isEqualTo("Observação do manejo");
+        assertThat(recorded.version()).isOne();
+        assertThat(notes.execute(context, animal, operation, 0L, occurred, "Observação do manejo").replayed())
+                .isTrue();
+        assertThatThrownBy(() -> notes.execute(context, animal, operation, 0L, occurred, "Outra nota"))
+                .isInstanceOf(HerdOperationIdempotencyConflictException.class);
+        assertThatThrownBy(() -> notes.execute(context, animal, UUID.randomUUID(), 0L, occurred, "Outra nota"))
+                .isInstanceOf(HerdAnimalVersionConflictException.class);
         assertThat(count("app.animal_events")).isEqualTo(2);
     }
 

@@ -1,11 +1,11 @@
 # Auditoria funcional do BovNex legado
 
-Esta matriz compara a intenção funcional do código em `../bovnex2` com o backend do eBov. `PARTIAL` e `MISSING` representam trabalho ainda necessário; este documento não declara paridade concluída. O legado é somente leitura. O estado atual do animal não é uma fotografia histórica, e nenhum quadro abaixo é declarado compatível com uma obrigação oficial vigente.
+Esta matriz compara a intenção funcional do código em `../bovnex2` com o backend do eBov. A paridade das capacidades aplicáveis ao backend está concluída, com exceção da adaptação de declarações oficiais que exige validação regulatória atual. O legado é somente leitura. O estado atual do animal não é uma fotografia histórica, e nenhum quadro abaixo é declarado compatível com uma obrigação oficial vigente.
 
 | Domínio e capacidade | Fonte legada | Equivalente no `gr-service` | Estado | Trabalho ou decisão |
 | --- | --- | --- | --- | --- |
 | Cadastro, identificação, sexo, nascimento e estado | `lib/models/animal.dart`, `lib/app_state.dart` | `herd` cadastro, correção e ciclo de vida | FULL | Preservar unicidade e versão. |
-| Evento livre com observações | `lib/models/event_types.dart`, `lib/features/herd/herd_add_event_wizard.dart` (`outro`) | Histórico tipado de animais | PARTIAL | Falta registro genérico auditado para observações sem evento clínico, reprodutivo ou comercial. |
+| Evento livre com observações | `lib/models/event_types.dart`, `lib/features/herd/herd_add_event_wizard.dart` (`outro`) | `POST /animals/{id}/notes` e histórico tipado | SUPERSEDED | A observação livre possui data, versão do animal, ator, idempotência e evento auditado `NOTE_RECORDED`; não altera estado clínico ou comercial. |
 | Importação de animais e vínculo de mãe | `lib/features/herd/herd_import_page.dart` | `POST /api/v1/herd/animals/imports` | SUPERSEDED | O cliente interpreta a planilha; a API recebe até 100 linhas normalizadas, cadastra todos os animais e vincula mães da mesma fazenda em uma transação. Reenvio com o mesmo `operationId` e conteúdo retorna o recibo. Status vendido ou morto requer evento de ciclo de vida com data e não é inferido da planilha. |
 | Mãe, nascimento e parto | `lib/app_state.dart`, `lib/features/herd/herd_add_event_wizard.dart`, `lib/features/herd/herd_screen.dart` | `herd` reprodução, relação materna, correção auditada e eventos | SUPERSEDED | O backend vincula parto, gestação e bezerro de forma transacional. Cadastro/importação podem vincular a mãe e `PUT /animals/{id}/mother` corrige vínculo manual com versão e idempotência. Vínculos originados de gestação registrada são imutáveis por esse comando para preservar o fato do parto. |
 | Venda e morte | `lib/models/event.dart`, `lib/app_state.dart` | `herd` ciclo de vida, detalhes estruturados e relatórios de valor | FULL | Motivo da morte, canal, comprador e valor da venda são preservados; o relatório soma e calcula a média dos valores informados. O legado não associa a venda a um lançamento financeiro. |
@@ -31,6 +31,12 @@ Esta matriz compara a intenção funcional do código em `../bovnex2` com o back
 | Marcador local de GEDAVE e chave de aftosa | `lib/models/farm_meta.dart`, `lib/features/settings/settings_screen.dart` | Relatórios sem declaração oficial e histórico sanitário estruturado | OBSOLETE/UNSAFE | `gedaveLastSync` aciona prazo fixo legado e `enableAftosa` controla alerta anual antigo. Ambos dependem de regra/região/ato oficial atual e não devem virar estado de conformidade no backend. |
 | Notificações locais e navegação | `lib/features/planner/planner_screen.dart`, `lib/features/dashboard/dashboard_screen.dart` | Agenda e pendências como dados | CLIENT_ONLY | Renderização e notificações do dispositivo pertencem ao cliente. |
 
+## Fechamento da auditoria
+
+- As 26 capacidades mapeadas estão classificadas em 7 `FULL`, 14 `SUPERSEDED`, 1 `PARTIAL` regulatória, 2 `CLIENT_ONLY` e 2 `OBSOLETE/UNSAFE`. Não resta lacuna funcional de backend fora da validação oficial de GEDAVE.
+- As migrations permanecem locais e versionadas. Não houve aplicação remota, deploy ou alteração em `bovnex2`, `gr-web` ou `gr-app`.
+- Lotes de importação e reprodução são limitados a 100 animais, transacionais e isolados por tenant/fazenda. Consultas operacionais usam filtros explícitos e RLS; as buscas por identificação, tratamentos e eventos aproveitam índices com prefixo de tenant. Relatórios históricos percorrem eventos da fazenda e podem exigir medição de custo quando houver rebanhos ou históricos muito grandes; nenhum benchmark de produção foi executado.
+
 ## Decisões de interpretação
 
 - `AgePolicy` do backend define as faixas. O legado usa o rótulo `36+` para animais acima de 36 meses, enquanto o modelo atual usa `MONTHS_37_PLUS` para meses completos maiores que 36.
@@ -43,8 +49,13 @@ Esta matriz compara a intenção funcional do código em `../bovnex2` com o back
 - A importação recebe linhas JSON normalizadas com `id`, `identification`, `sex`, `status` opcional `ACTIVE`, `birthDate`, `name` e `motherIdentification` opcionais. A API rejeita campos desconhecidos, sexos e datas inválidos, duplicatas, vínculos maternos inexistentes ou cíclicos. O lote é integralmente revertido em caso de erro. A interpretação de CSV e a pré-visualização permanecem no cliente. O importador legado ignorava datas inválidas e fazia escritas parciais; esses comportamentos não foram preservados.
 - O gerador histórico em `lib/app_state.dart` e o quadro sanitário em `lib/features/reports/gedave_report_screen.dart` usam critérios diferentes de período; a divergência requer um contrato temporal explícito antes de portar a exportação.
 - Grupos `SMART` consultam o estado atual dos animais. `referenceDate` altera somente a idade calculada, nunca reconstrói associação, gestação ou estado histórico. A regra legada `onlyPendencies` significa perfil incompleto (nascimento ou mãe ausente); o contrato novo a chama `onlyMissingProfile`. `onlyReproductionActive` consulta uma gestação aberta real, evitando inferir estado atual por um evento antigo de inseminação.
-- `/api/v1/herd/reports/period-reconciliation?from=...&to=...` exige datas explícitas e devolve `RECORDED_FARM_EVENT_LEDGER`. O saldo inicial soma entradas (`CREATED`, `BORN`, `TRANSFERRED_IN`) anteriores a `from` e subtrai saídas (`SOLD`, `DECEASED`, `TRANSFERRED_OUT`); o saldo final aplica os movimentos até `to`, inclusive. O relatório reflete fatos atualmente registrados com data de ocorrência, não uma fotografia do que era conhecido à época e não representa declaração GEDAVE.
+- `/api/v1/herd/reports/period-reconciliation?from=...&to=...` exige datas explícitas e devolve `RECORDED_FARM_EVENT_LEDGER`. O saldo inicial soma entradas (`CREATED`, `BORN`, `TRANSFERRED_IN`) anteriores a `from` e subtrai saídas (`SOLD`, `DECEASED`, `TRANSFERRED_OUT`); o saldo final aplica os movimentos até `to`, inclusive. `CREATED` do mesmo animal e fazenda que possui `BORN` representa o cadastro técnico do nascimento e não é somado novamente como entrada. O relatório reflete fatos atualmente registrados com data de ocorrência, não uma fotografia do que era conhecido à época e não representa declaração GEDAVE.
 - `/api/v1/herd/reports/historical-age-sex-balance?asOf=...` usa o último evento de entrada ou saída registrado para cada animal da fazenda até a data solicitada. Sexo e nascimento vêm do perfil atualmente corrigido. `positionSemantics=RECORDED_FARM_EVENTS_WITH_CURRENTLY_CORRECTED_PROFILE` impede interpretar o quadro como fotografia do que era conhecido na época. Data de nascimento ausente ou posterior à referência fica em `unknownBirthDate`. Não é declaração oficial.
+
+## Contrato de observações livres
+
+- `POST /api/v1/herd/animals/{id}/notes` recebe `{operationId,expectedVersion,occurredOn,notes}`. Observações não vazias de até 2.000 caracteres entram no histórico do animal com evento `NOTE_RECORDED`, autor e versão.
+- Reenvio idêntico retorna o mesmo resultado sem duplicação; reuso divergente ou versão desatualizada retorna conflito. O comando não transforma observações livres em diagnóstico, tratamento, venda ou evidência regulatória.
 
 ## Contrato de correção materna
 
