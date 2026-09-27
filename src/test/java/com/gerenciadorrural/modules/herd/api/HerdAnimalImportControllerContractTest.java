@@ -34,6 +34,21 @@ class HerdAnimalImportControllerContractTest {
                 + "\",\"expectedVersion\":0,\"expectedVersion\":1}",
                 HerdMotherController.Request.class)).isInstanceOf(Exception.class);
     }
+
+    @Test
+    void breedingBatchRejectsUnknownMotherAndDuplicateVersion() {
+        var mapper = new ObjectMapper();
+        String operation = UUID.randomUUID().toString();
+        String mother = UUID.randomUUID().toString();
+        String prefix = "{\"operationId\":\"" + operation
+                + "\",\"serviceType\":\"INSEMINATION\",\"serviceOn\":\"2026-01-01\",\"mothers\":[";
+        assertThatThrownBy(() -> mapper.readValue(prefix + "{\"id\":\"" + mother
+                + "\",\"expectedVersion\":0,\"farmId\":\"" + UUID.randomUUID() + "\"}]}",
+                HerdBreedingBatchController.Request.class)).isInstanceOf(Exception.class);
+        assertThatThrownBy(() -> mapper.readValue(prefix + "{\"id\":\"" + mother
+                + "\",\"expectedVersion\":0,\"expectedVersion\":1}]}",
+                HerdBreedingBatchController.Request.class)).isInstanceOf(Exception.class);
+    }
     @Test
     void acceptsBoundedBatchAndRejectsUnknownFields() throws Exception {
         var importer = mock(ImportCurrentFarmAnimals.class);

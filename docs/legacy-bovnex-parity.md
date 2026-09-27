@@ -5,6 +5,7 @@ Esta matriz compara a intenção funcional do código em `../bovnex2` com o back
 | Domínio e capacidade | Fonte legada | Equivalente no `gr-service` | Estado | Trabalho ou decisão |
 | --- | --- | --- | --- | --- |
 | Cadastro, identificação, sexo, nascimento e estado | `lib/models/animal.dart`, `lib/app_state.dart` | `herd` cadastro, correção e ciclo de vida | FULL | Preservar unicidade e versão. |
+| Evento livre com observações | `lib/models/event_types.dart`, `lib/features/herd/herd_add_event_wizard.dart` (`outro`) | Histórico tipado de animais | PARTIAL | Falta registro genérico auditado para observações sem evento clínico, reprodutivo ou comercial. |
 | Importação de animais e vínculo de mãe | `lib/features/herd/herd_import_page.dart` | `POST /api/v1/herd/animals/imports` | SUPERSEDED | O cliente interpreta a planilha; a API recebe até 100 linhas normalizadas, cadastra todos os animais e vincula mães da mesma fazenda em uma transação. Reenvio com o mesmo `operationId` e conteúdo retorna o recibo. Status vendido ou morto requer evento de ciclo de vida com data e não é inferido da planilha. |
 | Mãe, nascimento e parto | `lib/app_state.dart`, `lib/features/herd/herd_add_event_wizard.dart`, `lib/features/herd/herd_screen.dart` | `herd` reprodução, relação materna, correção auditada e eventos | SUPERSEDED | O backend vincula parto, gestação e bezerro de forma transacional. Cadastro/importação podem vincular a mãe e `PUT /animals/{id}/mother` corrige vínculo manual com versão e idempotência. Vínculos originados de gestação registrada são imutáveis por esse comando para preservar o fato do parto. |
 | Venda e morte | `lib/models/event.dart`, `lib/app_state.dart` | `herd` ciclo de vida, detalhes estruturados e relatórios de valor | FULL | Motivo da morte, canal, comprador e valor da venda são preservados; o relatório soma e calcula a média dos valores informados. O legado não associa a venda a um lançamento financeiro. |
@@ -15,7 +16,7 @@ Esta matriz compara a intenção funcional do código em `../bovnex2` com o back
 | Brucelose | `lib/features/reports/gedave_report_screen.dart` | Código estruturado, política etária e fatos efetivos | SUPERSEDED | A simples presença de texto no legado não prova cumprimento sanitário. |
 | Aftosa | `lib/features/reports/reports_screen.dart`, `lib/features/alerts/sanitary_alerts.dart` | Código histórico `FOOT_AND_MOUTH_DISEASE` em tratamentos e eventos | SUPERSEDED | Registro histórico estruturado sem vencimento automático. O alerta de 365 dias do legado é `OBSOLETE/UNSAFE`: o MAPA informa reconhecimento nacional como livre de aftosa sem vacinação. Uma `nextDueOn` explícita continua sendo manejo programado, sem inferência legal. |
 | Inseminação, cobertura e previsão de parto | `lib/features/herd/herd_add_event_wizard.dart`, `lib/services/planner_service.dart` | Gestação com duração configurável e previsão registrada | SUPERSEDED | O valor padrão de 283 dias pode ser sobrescrito; revisar por espécie/raça quando o produto modelar esses dados. |
-| Inseminação em massa | `lib/features/herd/herd_screen.dart`, `lib/app_state.dart` (`addEventsBulk`) | Reprodução por mãe, com operação idempotente | PARTIAL | Falta comando transacional de lote com recibo próprio e proteção contra reuso divergente da operação. |
+| Inseminação em massa | `lib/features/herd/herd_screen.dart`, `lib/app_state.dart` (`addEventsBulk`) | `POST /api/v1/herd/breedings/batch` | SUPERSEDED | O lote valida versão de cada mãe, é transacional e registra recibo idempotente por fazenda. Qualquer mãe inválida reverte gestações e eventos de todas. |
 | Alertas de parto e conclusão de gestação | `lib/features/herd/services/reproduction_alerts.dart` | Pendências, agenda e estados de gestação | SUPERSEDED | Não repetir alerta após parto/encerramento real. |
 | Pesagens e evolução | `lib/models/event.dart`, `lib/services/planner_service.dart` | Pesagens, pendências, relatórios e dashboard | FULL | A agenda é manejo, não obrigação legal. |
 | Produção de leite por animal, turno e tendência | `lib/features/milk/milk_insights.dart`, `lib/app_state.dart` | Registros imutáveis, histórico, resumo por animal e indicadores da fazenda | FULL | Tendência usa comparação de 15% com a média dos registros dos últimos sete dias; não é diagnóstico veterinário. |
@@ -50,6 +51,11 @@ Esta matriz compara a intenção funcional do código em `../bovnex2` com o back
 - `PUT /api/v1/herd/animals/{id}/mother` recebe `{operationId,expectedVersion,motherId}`; `motherId: null` remove vínculo manual. A mesma operação e conteúdo devolvem o resultado original, e reuso divergente retorna conflito.
 - A mãe precisa ser fêmea da fazenda autorizada; o comando rejeita autorreferência, ciclos e nascimento da mãe igual ou posterior ao do filho quando ambas as datas existem. O filho usa `expectedVersion`, e a alteração grava `MOTHER_CORRECTED` no histórico auditado.
 - Vínculo proveniente de gestação/parto registrado permanece protegido. Sua revisão exige correção específica dos fatos reprodutivos para não produzir histórico contraditório.
+
+## Contrato de reprodução em lote
+
+- `POST /api/v1/herd/breedings/batch` recebe `operationId`, `serviceType`, `serviceOn`, `sireReference?`, `expectedCalvingOn?`, `notes?` e `mothers: [{id,expectedVersion}]` com 1 a 100 mães distintas.
+- O backend aplica a mesma validação e política de duração do comando unitário, ordena IDs para evitar dependência da ordem enviada e preserva um recibo de replay. Reuso divergente de `operationId` retorna conflito. O lote inteiro reverte em caso de mãe inválida, versão desatualizada ou falha de persistência.
 
 ## Contrato de grupos de manejo
 

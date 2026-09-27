@@ -3,6 +3,7 @@ package com.gerenciadorrural.infrastructure.database;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gerenciadorrural.modules.herd.application.*;
 import com.gerenciadorrural.modules.herd.domain.HerdAnimalSex;
+import com.gerenciadorrural.modules.herd.domain.ReproductionServiceType;
 import com.gerenciadorrural.modules.herd.infrastructure.*;
 import com.gerenciadorrural.shared.infrastructure.database.*;
 import com.gerenciadorrural.shared.tenancy.*;
@@ -29,6 +30,8 @@ class HerdAnimalImportIntegrationTest extends PostgresMigrationTestSupport {
     private JdbcHerdAnimalImportRepository repository;
     private ImportCurrentFarmAnimals importer;
     private CorrectCurrentFarmAnimalMother motherCorrections;
+    private BatchBreedCurrentFarmAnimals breedingBatches;
+    private JdbcHerdBreedingBatchRepository breedingRepository;
     private TenantContext context;
     private UUID farmId;
     private UUID tenantId;
@@ -64,6 +67,12 @@ class HerdAnimalImportIntegrationTest extends PostgresMigrationTestSupport {
         importer = new ImportCurrentFarmAnimals(transactions, create, repository, Clock.systemUTC());
         motherCorrections = new CorrectCurrentFarmAnimalMother(transactions,
                 new JdbcHerdAnimalProfileRepository(named), new JdbcMaternalRelationRepository(named), events);
+        var reproduction = new ManageHerdReproduction(transactions,
+                new JdbcHerdAnimalProfileRepository(named), new JdbcHerdReproductionRepository(named),
+                new JdbcHerdAnimalWriteRepository(named), new JdbcMaternalRelationRepository(named),
+                events, new ObjectMapper().findAndRegisterModules(), Clock.systemUTC(), 283);
+        breedingRepository = new JdbcHerdBreedingBatchRepository(named);
+        breedingBatches = new BatchBreedCurrentFarmAnimals(transactions, reproduction, breedingRepository);
         UUID userId = UUID.randomUUID();
         tenantId = UUID.randomUUID();
         farmId = UUID.randomUUID();
@@ -195,6 +204,55 @@ class HerdAnimalImportIntegrationTest extends PostgresMigrationTestSupport {
                 .isInstanceOf(HerdMotherCorrectionConflictException.class);
         assertThat(transactions.execute(context, () -> repository.motherId(context.tenantId(), child)))
                 .contains(mother);
+        assertThat(count("app.animal_events")).isEqualTo(2);
+    }
+
+    @Test
+    void breedsMultipleMothersAtomicallyAndReplaysReceipt() throws Exception {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        importer.execute(context, UUID.randomUUID(), List.of(
+                row(first, "M-1", HerdAnimalSex.FEMALE, LocalDate.of(2020, 1, 1), null),
+                row(second, "M-2", HerdAnimalSex.FEMALE, LocalDate.of(2021, 1, 1), null)));
+        UUID operation = UUID.randomUUID();
+        var mothers = List.of(new BatchBreedCurrentFarmAnimals.Mother(first, 0L),
+                new BatchBreedCurrentFarmAnimals.Mother(second, 0L));
+        var result = breedingBatches.execute(context, operation, ReproductionServiceType.INSEMINATION,
+                LocalDate.of(2026, 1, 1), "Sêmen A", null, null, mothers);
+        assertThat(result.items()).hasSize(2);
+        assertThat(breedingBatches.execute(context, operation, ReproductionServiceType.INSEMINATION,
+                LocalDate.of(2026, 1, 1), "Sêmen A", null, null, mothers))
+                .isEqualTo(new BatchBreedCurrentFarmAnimals.Result(result.items(), true));
+        assertThat(count("app.animal_pregnancies")).isEqualTo(2);
+        assertThat(count("app.herd_breeding_batches")).isOne();
+        UUID otherTenant = UUID.randomUUID();
+        UUID otherFarm = UUID.randomUUID();
+        executeAsAdmin("insert into app.organizations(id,name,status) values (?, 'Other', 'ACTIVE')", otherTenant);
+        executeAsAdmin("insert into app.farms(id,tenant_id,name,status) values (?, ?, 'Other farm', 'ACTIVE')",
+                otherFarm, otherTenant);
+        TenantContext other = new TenantContext(new TenantId(otherTenant), context.userId(), otherFarm,
+                UUID.randomUUID(), "OWNER", "ALL_FARMS");
+        assertThat(transactions.execute(other,
+                () -> breedingRepository.find(other.tenantId(), other.farmId(), operation))).isEmpty();
+        assertThatThrownBy(() -> breedingBatches.execute(context, operation,
+                ReproductionServiceType.INSEMINATION, LocalDate.of(2026, 1, 1), "Outro sêmen",
+                null, null, mothers)).isInstanceOf(HerdOperationIdempotencyConflictException.class);
+    }
+
+    @Test
+    void failedBreedingBatchRollsBackEarlierMothersAndReceipt() throws Exception {
+        UUID female = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID male = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        importer.execute(context, UUID.randomUUID(), List.of(
+                row(female, "F", HerdAnimalSex.FEMALE, LocalDate.of(2020, 1, 1), null),
+                row(male, "M", HerdAnimalSex.MALE, LocalDate.of(2020, 1, 1), null)));
+        assertThatThrownBy(() -> breedingBatches.execute(context, UUID.randomUUID(),
+                ReproductionServiceType.INSEMINATION, LocalDate.of(2026, 1, 1), null,
+                null, null, List.of(new BatchBreedCurrentFarmAnimals.Mother(female, 0L),
+                        new BatchBreedCurrentFarmAnimals.Mother(male, 0L))))
+                .isInstanceOf(HerdLifecycleConflictException.class);
+        assertThat(count("app.animal_pregnancies")).isZero();
+        assertThat(count("app.herd_breeding_batches")).isZero();
         assertThat(count("app.animal_events")).isEqualTo(2);
     }
 
