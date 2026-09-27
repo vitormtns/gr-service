@@ -93,6 +93,22 @@ class HerdReportControllerContractTest {
   }
 
   @Test
+  void reconstructsHistoricalBalanceFromEventsWithExplicitProfileSemantics() throws Exception {
+    LocalDate asOf = LocalDate.of(2026, 9, 1);
+    when(repository.historicalAgeSexCounts(context.tenantId(), context.farmId(), asOf))
+        .thenReturn(List.of(new AgeSexCount(HerdAnimalSex.FEMALE, LocalDate.of(2024, 1, 1), 2)));
+    mvc.perform(get("/api/v1/herd/reports/historical-age-sex-balance?asOf=2026-09-01"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.positionSemantics")
+            .value("RECORDED_FARM_EVENTS_WITH_CURRENTLY_CORRECTED_PROFILE"))
+        .andExpect(jsonPath("$.totalActiveAnimals").value(2));
+    mvc.perform(get("/api/v1/herd/reports/historical-age-sex-balance?asOf=2026-09-14"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/herd/reports/historical-age-sex-balance?unexpected=true"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void exposesPeriodEventReconciliationWithExplicitSemantics() throws Exception {
     LocalDate from = LocalDate.of(2026, 9, 1);
     LocalDate to = LocalDate.of(2026, 9, 13);

@@ -113,6 +113,10 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
 
       var lifecycle =
           reports.lifecycle(tenant(f), f.farm(), FROM, TO, null, null, 20, 0);
+      assertThat(reports.historicalAgeSexCounts(tenant(f), f.farm(), LocalDate.of(2026, 1, 15))
+          .stream().mapToLong(AgeSexCount::count).sum()).isEqualTo(4);
+      assertThat(reports.historicalAgeSexCounts(tenant(f), f.farm(), LocalDate.of(2026, 2, 3))
+          .stream().mapToLong(AgeSexCount::count).sum()).isEqualTo(2);
       assertThat(lifecycle.summary().countsByEventType())
           .containsEntry(LifecycleEvent.CREATED, 4L)
           .containsEntry(LifecycleEvent.BORN, 1L)
@@ -122,6 +126,8 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
       assertThat(lifecycle.summary().totalSaleAmount()).isEqualByComparingTo("1200.50");
       assertThat(lifecycle.summary().averageSaleAmount()).isEqualByComparingTo("1200.50");
       assertThat(lifecycle.summary().salesWithAmount()).isOne();
+      assertThat(lifecycle.summary().salesByChannel()).containsEntry("AUCTION", 1L);
+      assertThat(lifecycle.summary().deathsByReason()).containsEntry("UNSPECIFIED", 1L);
       assertThat(lifecycle.totalElements()).isEqualTo(7);
       assertThat(lifecycle.items()).filteredOn(item -> item.event() == LifecycleEvent.SOLD)
           .singleElement().satisfies(item -> {

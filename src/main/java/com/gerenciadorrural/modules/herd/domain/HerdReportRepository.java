@@ -22,6 +22,8 @@ public interface HerdReportRepository {
 
   List<AgeSexCount> currentAgeSexCounts(TenantId tenantId, UUID farmId);
 
+  List<AgeSexCount> historicalAgeSexCounts(TenantId tenantId, UUID farmId, LocalDate asOf);
+
   EventLedger eventLedger(TenantId tenantId, UUID farmId, LocalDate from, LocalDate to);
 
   ReportPage<LifecycleSummary, LifecycleItem> lifecycle(
@@ -151,7 +153,8 @@ public interface HerdReportRepository {
 
   record LifecycleSummary(Map<LifecycleEvent, Long> countsByEventType,
       long totalAffectedAnimals, BigDecimal totalSaleAmount, BigDecimal averageSaleAmount,
-      long salesWithAmount) {}
+      long salesWithAmount, Map<String, Long> deathsByReason,
+      Map<String, Long> salesByChannel) {}
 
   record LifecycleItem(
       UUID id,

@@ -53,7 +53,20 @@ public class ReadHerdReports {
     if (reference.isAfter(today)) {
       throw new HerdReportQueryInvalidException();
     }
-    return transactions.execute(context, () -> {
+    return transactions.execute(context, () -> balance(reference, "CURRENT_STATE_AGED_AT_REFERENCE",
+        reports.currentAgeSexCounts(context.tenantId(), context.farmId())));
+  }
+
+  public AgeSexBalance historicalAgeSexBalance(TenantContext context, LocalDate asOf) {
+    validateRole(context);
+    if (asOf == null || asOf.isAfter(LocalDate.now(clock)))
+      throw new HerdReportQueryInvalidException();
+    return transactions.execute(context, () -> balance(asOf,
+        "RECORDED_FARM_EVENTS_WITH_CURRENTLY_CORRECTED_PROFILE",
+        reports.historicalAgeSexCounts(context.tenantId(), context.farmId(), asOf)));
+  }
+
+  private AgeSexBalance balance(LocalDate reference, String semantics, List<AgeSexCount> rows) {
       Map<AgeBand, Map<HerdAnimalSex, Long>> counts = new EnumMap<>(AgeBand.class);
       for (AgeBand band : AgeBand.values()) {
         Map<HerdAnimalSex, Long> bySex = new EnumMap<>(HerdAnimalSex.class);
@@ -64,7 +77,7 @@ public class ReadHerdReports {
       }
       long total = 0;
       long unknownBirthDate = 0;
-      for (AgeSexCount row : reports.currentAgeSexCounts(context.tenantId(), context.farmId())) {
+      for (AgeSexCount row : rows) {
         total += row.count();
         if (row.birthDate() == null || row.birthDate().isAfter(reference)) {
           unknownBirthDate += row.count();
@@ -79,9 +92,8 @@ public class ReadHerdReports {
           cells.add(new AgeSexCell(band, sex, counts.get(band).get(sex)));
         }
       }
-      return new AgeSexBalance(reference, "CURRENT_STATE_AGED_AT_REFERENCE", total,
+      return new AgeSexBalance(reference, semantics, total,
           unknownBirthDate, List.copyOf(cells));
-    });
   }
 
   public PeriodReconciliation periodReconciliation(TenantContext context, LocalDate from,

@@ -51,6 +51,29 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
   }
 
   @Override
+  public List<AgeSexCount> historicalAgeSexCounts(TenantId tenant, UUID farm, LocalDate asOf) {
+    return jdbc.query("""
+        with last_flow as (
+          select distinct on (animal_id) animal_id, event_type
+            from app.animal_events
+           where tenant_id = :tenant and farm_id = :farm
+             and event_type in ('CREATED','BORN','TRANSFERRED_IN','SOLD','DECEASED','TRANSFERRED_OUT')
+             and coalesce(occurred_on, recorded_at::date) <= :asOf
+           order by animal_id, coalesce(occurred_on, recorded_at::date) desc,
+                    recorded_at desc, id desc
+        )
+        select a.sex, a.birth_date, count(*) total
+          from last_flow f
+          join app.animals a on a.tenant_id = :tenant and a.id = f.animal_id
+         where f.event_type in ('CREATED','BORN','TRANSFERRED_IN')
+         group by a.sex, a.birth_date
+         order by a.sex, a.birth_date
+        """, base(tenant, farm).addValue("asOf", asOf), (rs, row) -> new AgeSexCount(
+            HerdAnimalSex.valueOf(rs.getString("sex")),
+            rs.getObject("birth_date", LocalDate.class), rs.getLong("total")));
+  }
+
+  @Override
   public EventLedger eventLedger(TenantId tenant, UUID farm, LocalDate from, LocalDate to) {
     MapSqlParameterSource parameters = base(tenant, farm).addValue("from", from).addValue("to", to);
     return jdbc.queryForObject("""
@@ -198,6 +221,20 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
     BigDecimal averageSaleAmount = salesWithAmount == 0 ? null
         : totalSaleAmount.divide(BigDecimal.valueOf(salesWithAmount), 2,
             java.math.RoundingMode.HALF_UP);
+    Map<String, Long> deathsByReason = new LinkedHashMap<>();
+    jdbc.query("""
+        select coalesce(nullif(btrim(e.payload->>'deathReason'),''),'UNSPECIFIED') reason,
+               count(*) total
+          from app.animal_events e
+        """ + where + " and e.event_type='DECEASED' group by reason order by reason", p,
+        (RowCallbackHandler) rs -> deathsByReason.put(rs.getString("reason"), rs.getLong("total")));
+    Map<String, Long> salesByChannel = new LinkedHashMap<>();
+    jdbc.query("""
+        select coalesce(nullif(e.payload->>'saleChannel',''),'UNSPECIFIED') channel,
+               count(*) total
+          from app.animal_events e
+        """ + where + " and e.event_type='SOLD' group by channel order by channel", p,
+        (RowCallbackHandler) rs -> salesByChannel.put(rs.getString("channel"), rs.getLong("total")));
     List<LifecycleItem> items =
         jdbc.query(
             HISTORICAL_SNAPSHOTS
@@ -228,7 +265,7 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
                     rs.getString("sale_amount") == null ? null
                         : new BigDecimal(rs.getString("sale_amount"))));
     return new ReportPage<>(new LifecycleSummary(counts, affected, totalSaleAmount,
-        averageSaleAmount, salesWithAmount), items, total);
+        averageSaleAmount, salesWithAmount, deathsByReason, salesByChannel), items, total);
   }
 
   @Override
