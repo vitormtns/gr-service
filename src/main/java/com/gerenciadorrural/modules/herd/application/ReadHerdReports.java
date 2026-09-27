@@ -84,6 +84,17 @@ public class ReadHerdReports {
     });
   }
 
+  public PeriodReconciliation periodReconciliation(TenantContext context, LocalDate from,
+      LocalDate to) {
+    validateRole(context);
+    if (from == null || to == null || to.isAfter(LocalDate.now(clock)))
+      throw new HerdReportQueryInvalidException();
+    DateRange range = validate(context, from, to, 0, 1);
+    return transactions.execute(context, () -> new PeriodReconciliation(range.from(), range.to(),
+        "RECORDED_FARM_EVENT_LEDGER", reports.eventLedger(context.tenantId(), context.farmId(),
+        range.from(), range.to())));
+  }
+
   public Page<HerdPositionSummary, HerdPositionItem> herdPosition(
       TenantContext context,
       HerdReportCategory category,
@@ -353,4 +364,7 @@ public class ReadHerdReports {
 
   public record AgeSexBalance(LocalDate referenceDate, String positionSemantics,
       long totalActiveAnimals, long unknownBirthDate, List<AgeSexCell> cells) {}
+
+  public record PeriodReconciliation(LocalDate from, LocalDate to, String positionSemantics,
+      EventLedger balance) {}
 }

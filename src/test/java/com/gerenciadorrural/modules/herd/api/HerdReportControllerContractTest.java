@@ -93,6 +93,25 @@ class HerdReportControllerContractTest {
   }
 
   @Test
+  void exposesPeriodEventReconciliationWithExplicitSemantics() throws Exception {
+    LocalDate from = LocalDate.of(2026, 9, 1);
+    LocalDate to = LocalDate.of(2026, 9, 13);
+    when(repository.eventLedger(context.tenantId(), context.farmId(), from, to))
+        .thenReturn(new EventLedger(10, 1, 2, 1, 3, 1, 1, 9));
+    mvc.perform(get("/api/v1/herd/reports/period-reconciliation?from=2026-09-01&to=2026-09-13"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.positionSemantics").value("RECORDED_FARM_EVENT_LEDGER"))
+        .andExpect(jsonPath("$.balance.openingAnimals").value(10))
+        .andExpect(jsonPath("$.balance.closingAnimals").value(9));
+    mvc.perform(get("/api/v1/herd/reports/period-reconciliation?from=2026-09-01"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/herd/reports/period-reconciliation?from=2026-09-01&to=2026-09-14"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/herd/reports/period-reconciliation?from=2026-09-01&to=2026-09-13&tenantId=" + UUID.randomUUID()))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void rejectsMalformedUnknownRepeatedAndOutOfRangeFilters() throws Exception {
     List<MockHttpServletRequestBuilder> invalid =
         List.of(

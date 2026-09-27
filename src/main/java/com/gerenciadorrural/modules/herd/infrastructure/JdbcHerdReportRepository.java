@@ -51,6 +51,35 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
   }
 
   @Override
+  public EventLedger eventLedger(TenantId tenant, UUID farm, LocalDate from, LocalDate to) {
+    MapSqlParameterSource parameters = base(tenant, farm).addValue("from", from).addValue("to", to);
+    return jdbc.queryForObject("""
+        with flow as (
+          select event_type,coalesce(occurred_on,recorded_at::date) effective_on
+            from app.animal_events
+           where tenant_id=:tenant and farm_id=:farm
+             and event_type in ('CREATED','BORN','TRANSFERRED_IN','SOLD','DECEASED','TRANSFERRED_OUT')
+             and (occurred_on<=:to or (occurred_on is null and recorded_at::date<=:to))
+        )
+        select
+          count(*) filter (where effective_on<:from and event_type in ('CREATED','BORN','TRANSFERRED_IN'))
+            - count(*) filter (where effective_on<:from and event_type in ('SOLD','DECEASED','TRANSFERRED_OUT')) opening,
+          count(*) filter (where effective_on between :from and :to and event_type='CREATED') registered,
+          count(*) filter (where effective_on between :from and :to and event_type='BORN') births,
+          count(*) filter (where effective_on between :from and :to and event_type='TRANSFERRED_IN') transfers_in,
+          count(*) filter (where effective_on between :from and :to and event_type='SOLD') sales,
+          count(*) filter (where effective_on between :from and :to and event_type='DECEASED') deaths,
+          count(*) filter (where effective_on between :from and :to and event_type='TRANSFERRED_OUT') transfers_out,
+          count(*) filter (where event_type in ('CREATED','BORN','TRANSFERRED_IN'))
+            - count(*) filter (where event_type in ('SOLD','DECEASED','TRANSFERRED_OUT')) closing
+        from flow
+        """, parameters, (row, number) -> new EventLedger(row.getLong("opening"),
+        row.getLong("registered"), row.getLong("births"), row.getLong("transfers_in"),
+        row.getLong("sales"), row.getLong("deaths"), row.getLong("transfers_out"),
+        row.getLong("closing")));
+  }
+
+  @Override
   public ReportPage<HerdPositionSummary, HerdPositionItem> herdPosition(
       TenantId tenant,
       UUID farm,

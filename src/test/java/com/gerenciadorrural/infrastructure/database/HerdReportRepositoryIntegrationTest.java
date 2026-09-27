@@ -21,6 +21,31 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
   private static final LocalDate TO = LocalDate.of(2026, 12, 31);
 
   @Test
+  void reconcilesRecordedFarmEventsAcrossPeriodBoundariesAndRls() throws Exception {
+    Fixture fixture = fixture();
+    event(fixture, fixture.activeFemale(), "CREATED", LocalDate.of(2026, 1, 1), null, "{}");
+    event(fixture, fixture.activeMale(), "CREATED", LocalDate.of(2026, 1, 1), null, "{}");
+    event(fixture, fixture.sold(), "CREATED", LocalDate.of(2026, 2, 1), null, "{}");
+    event(fixture, fixture.sold(), "SOLD", LocalDate.of(2026, 2, 2), UUID.randomUUID(), "{}");
+    event(fixture, fixture.deceased(), "BORN", LocalDate.of(2026, 2, 3), UUID.randomUUID(), "{}");
+    event(fixture, fixture.deceased(), "DECEASED", LocalDate.of(2026, 2, 4), UUID.randomUUID(), "{}");
+    try (Connection connection = adminConnection()) {
+      EventLedger ledger = repository(connection).eventLedger(tenant(fixture), fixture.farm(),
+          LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28));
+      assertThat(ledger).isEqualTo(new EventLedger(2, 1, 1, 0, 1, 1, 0, 2));
+      assertThat(repository(connection).eventLedger(tenant(fixture), fixture.otherFarm(),
+          LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28)).closingAnimals()).isZero();
+    }
+    Fixture outsider = fixture();
+    try (Connection connection = apiConnection()) {
+      setTenant(connection, outsider.tenant());
+      assertThat(repository(connection).eventLedger(tenant(fixture), fixture.farm(),
+          LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28)).closingAnimals()).isZero();
+      connection.rollback();
+    }
+  }
+
+  @Test
   void groupsCurrentActiveAnimalsBySexAndBirthDateWithinFarmAndTenant() throws Exception {
     Fixture f = fixture();
     try (Connection connection = adminConnection()) {

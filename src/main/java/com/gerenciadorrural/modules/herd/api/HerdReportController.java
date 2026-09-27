@@ -31,6 +31,13 @@ public class HerdReportController {
     return ok(reports.currentAgeSexBalance(context, referenceDate));
   }
 
+  @GetMapping("/period-reconciliation")
+  ResponseEntity<?> periodReconciliation(@ResolvedTenantContext TenantContext context,
+      @RequestParam LocalDate from, @RequestParam LocalDate to, HttpServletRequest request) {
+    parameters(request, "from", "to");
+    return ok(reports.periodReconciliation(context, from, to));
+  }
+
   @GetMapping("/herd-position")
   ResponseEntity<?> herdPosition(
       @ResolvedTenantContext TenantContext context,
