@@ -61,6 +61,7 @@ public class ImportCurrentFarmAnimals {
                 if (!previous.get().payloadHash().equals(hash)) throw new HerdAnimalIdempotencyConflictException();
                 return new Result(previous.get().animalIds(), true);
             }
+            imports.lockMaternalGraph(context.tenantId(), context.farmId());
             List<UUID> ids = new ArrayList<>();
             for (Row row : normalized) {
                 // The outer tenant transaction makes every insert and event atomic with the receipt.

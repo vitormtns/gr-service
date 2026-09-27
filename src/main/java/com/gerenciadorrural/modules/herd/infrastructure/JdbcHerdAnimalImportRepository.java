@@ -32,6 +32,13 @@ public class JdbcHerdAnimalImportRepository implements HerdAnimalImportRepositor
     }
 
     @Override
+    public void lockMaternalGraph(TenantId tenantId, UUID farmId) {
+        jdbc.query("select pg_advisory_xact_lock(hashtextextended(:key, 0))",
+                new MapSqlParameterSource("key", "maternal:" + tenantId.value() + ":" + farmId),
+                rs -> {});
+    }
+
+    @Override
     public Optional<Receipt> find(TenantId tenantId, UUID farmId, UUID operationId) {
         return jdbc.query("""
                 select payload_hash, animal_ids from app.herd_animal_imports

@@ -10,6 +10,8 @@ public interface HerdAnimalImportRepository {
 
     void lock(TenantId tenantId, UUID farmId, UUID operationId);
 
+    void lockMaternalGraph(TenantId tenantId, UUID farmId);
+
     Optional<Receipt> find(TenantId tenantId, UUID farmId, UUID operationId);
 
     void save(TenantId tenantId, UUID farmId, UUID operationId, Receipt receipt);

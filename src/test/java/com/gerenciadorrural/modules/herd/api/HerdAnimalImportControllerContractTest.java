@@ -20,8 +20,20 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class HerdAnimalImportControllerContractTest {
+    @Test
+    void motherCommandRejectsUnknownAndDuplicateFields() {
+        var mapper = new ObjectMapper();
+        String operation = UUID.randomUUID().toString();
+        assertThatThrownBy(() -> mapper.readValue("{\"operationId\":\"" + operation
+                + "\",\"expectedVersion\":0,\"farmId\":\"" + UUID.randomUUID() + "\"}",
+                HerdMotherController.Request.class)).isInstanceOf(Exception.class);
+        assertThatThrownBy(() -> mapper.readValue("{\"operationId\":\"" + operation
+                + "\",\"expectedVersion\":0,\"expectedVersion\":1}",
+                HerdMotherController.Request.class)).isInstanceOf(Exception.class);
+    }
     @Test
     void acceptsBoundedBatchAndRejectsUnknownFields() throws Exception {
         var importer = mock(ImportCurrentFarmAnimals.class);

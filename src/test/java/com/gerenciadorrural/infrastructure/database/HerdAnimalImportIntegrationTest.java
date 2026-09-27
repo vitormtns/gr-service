@@ -28,6 +28,7 @@ class HerdAnimalImportIntegrationTest extends PostgresMigrationTestSupport {
     private SpringTenantTransactionExecutor transactions;
     private JdbcHerdAnimalImportRepository repository;
     private ImportCurrentFarmAnimals importer;
+    private CorrectCurrentFarmAnimalMother motherCorrections;
     private TenantContext context;
     private UUID farmId;
     private UUID tenantId;
@@ -57,9 +58,12 @@ class HerdAnimalImportIntegrationTest extends PostgresMigrationTestSupport {
                 new DataSourceTransactionManager(dataSource)), named,
                 new TransactionalDatabaseRole(jdbc, new DatabaseAccessProperties("app", "app_api")));
         repository = new JdbcHerdAnimalImportRepository(named);
+        var events = new JdbcAnimalEventRepository(named, new ObjectMapper().findAndRegisterModules());
         var create = new CreateCurrentFarmAnimal(transactions, new JdbcHerdAnimalWriteRepository(named),
-                Clock.systemUTC(), new JdbcAnimalEventRepository(named, new ObjectMapper().findAndRegisterModules()));
+                Clock.systemUTC(), events);
         importer = new ImportCurrentFarmAnimals(transactions, create, repository, Clock.systemUTC());
+        motherCorrections = new CorrectCurrentFarmAnimalMother(transactions,
+                new JdbcHerdAnimalProfileRepository(named), new JdbcMaternalRelationRepository(named), events);
         UUID userId = UUID.randomUUID();
         tenantId = UUID.randomUUID();
         farmId = UUID.randomUUID();
@@ -119,6 +123,79 @@ class HerdAnimalImportIntegrationTest extends PostgresMigrationTestSupport {
                 () -> repository.save(context.tenantId(), context.farmId(), UUID.randomUUID(),
                         new com.gerenciadorrural.modules.herd.domain.HerdAnimalImportRepository.Receipt(
                                 "0".repeat(64), List.of(animal))))).isInstanceOf(org.springframework.dao.DataAccessException.class);
+    }
+
+    @Test
+    void linksCorrectsAndRemovesMotherWithVersionedAuditedReplay() throws Exception {
+        UUID firstMother = UUID.randomUUID();
+        UUID secondMother = UUID.randomUUID();
+        UUID child = UUID.randomUUID();
+        importer.execute(context, UUID.randomUUID(), List.of(
+                row(firstMother, "M-1", HerdAnimalSex.FEMALE, LocalDate.of(2020, 1, 1), null),
+                row(secondMother, "M-2", HerdAnimalSex.FEMALE, LocalDate.of(2020, 2, 1), null),
+                row(child, "C-1", HerdAnimalSex.MALE, LocalDate.of(2024, 1, 1), null)));
+        UUID operation = UUID.randomUUID();
+        assertThat(motherCorrections.execute(context, child, operation, 0L, firstMother).version()).isOne();
+        assertThat(motherCorrections.execute(context, child, operation, 0L, firstMother).replayed()).isTrue();
+        assertThatThrownBy(() -> motherCorrections.execute(context, child, operation, 0L, secondMother))
+                .isInstanceOf(HerdOperationIdempotencyConflictException.class);
+        assertThatThrownBy(() -> motherCorrections.execute(context, child, UUID.randomUUID(), 0L, secondMother))
+                .isInstanceOf(HerdAnimalVersionConflictException.class);
+        assertThat(motherCorrections.execute(context, child, UUID.randomUUID(), 1L, secondMother).version())
+                .isEqualTo(2);
+        assertThat(transactions.execute(context, () -> repository.motherId(context.tenantId(), child)))
+                .contains(secondMother);
+        assertThat(motherCorrections.execute(context, child, UUID.randomUUID(), 2L, null).version())
+                .isEqualTo(3);
+        assertThat(transactions.execute(context, () -> repository.motherId(context.tenantId(), child)))
+                .isEmpty();
+        assertThat(count("app.animal_events")).isEqualTo(6);
+    }
+
+    @Test
+    void rejectsCyclesAndCrossFarmMothersWithoutPartialWrites() throws Exception {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        importer.execute(context, UUID.randomUUID(), List.of(
+                row(a, "A", HerdAnimalSex.FEMALE, null, null),
+                row(b, "B", HerdAnimalSex.FEMALE, null, null)));
+        motherCorrections.execute(context, b, UUID.randomUUID(), 0L, a);
+        assertThatThrownBy(() -> motherCorrections.execute(context, a, UUID.randomUUID(), 0L, b))
+                .isInstanceOf(HerdAnimalCommandInvalidException.class);
+        UUID otherFarm = UUID.randomUUID();
+        executeAsAdmin("insert into app.farms(id,tenant_id,name,status) values (?, ?, 'Other farm', 'ACTIVE')",
+                otherFarm, tenantId);
+        UUID outsider = UUID.randomUUID();
+        executeAsAdmin("insert into app.animals(id,tenant_id,farm_id,identification,sex) values (?,?,?,'OUT','FEMALE')",
+                outsider, tenantId, otherFarm);
+        assertThatThrownBy(() -> motherCorrections.execute(context, b, UUID.randomUUID(), 1L, outsider))
+                .isInstanceOf(HerdAnimalNotFoundException.class);
+        assertThat(count("app.animal_events")).isEqualTo(3);
+    }
+
+    @Test
+    void refusesToRewriteMaternalEvidenceCreatedByCalving() throws Exception {
+        UUID mother = UUID.randomUUID();
+        UUID child = UUID.randomUUID();
+        importer.execute(context, UUID.randomUUID(), List.of(
+                row(mother, "M-1", HerdAnimalSex.FEMALE, LocalDate.of(2020, 1, 1), null),
+                row(child, "C-1", HerdAnimalSex.MALE, LocalDate.of(2024, 1, 1), null)));
+        UUID pregnancy = UUID.randomUUID();
+        executeAsAdmin("""
+                insert into app.animal_pregnancies
+                  (id,tenant_id,farm_id,mother_animal_id,service_type,service_on,
+                   expected_calving_on,status,ended_on,calf_animal_id,operation_id,command_payload)
+                values (?,?,?,?,'INSEMINATION','2023-04-01','2024-01-01','CALVED','2024-01-01',?,?,'{}')
+                """, pregnancy, tenantId, farmId, mother, child, UUID.randomUUID());
+        executeAsAdmin("""
+                insert into app.animal_maternal_relations
+                  (tenant_id,mother_animal_id,calf_animal_id,pregnancy_id) values (?,?,?,?)
+                """, tenantId, mother, child, pregnancy);
+        assertThatThrownBy(() -> motherCorrections.execute(context, child, UUID.randomUUID(), 0L, null))
+                .isInstanceOf(HerdMotherCorrectionConflictException.class);
+        assertThat(transactions.execute(context, () -> repository.motherId(context.tenantId(), child)))
+                .contains(mother);
+        assertThat(count("app.animal_events")).isEqualTo(2);
     }
 
     private static ImportCurrentFarmAnimals.Row row(UUID id, String identification, HerdAnimalSex sex,
