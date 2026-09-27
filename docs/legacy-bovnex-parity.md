@@ -8,7 +8,7 @@ Esta matriz compara a intenção funcional do código em `../bovnex2` com o back
 | Mãe, nascimento e parto | `lib/app_state.dart`, `lib/features/herd/herd_add_event_wizard.dart` | `herd` reprodução, relação materna e eventos | SUPERSEDED | O backend vincula parto, gestação e bezerro de forma transacional. |
 | Venda e morte | `lib/models/event.dart`, `lib/app_state.dart` | `herd` ciclo de vida, detalhes estruturados no evento e relatórios | PARTIAL | Motivo, canal, comprador e valor passaram a ser preservados; ainda falta vincular o valor pecuário a lançamento financeiro quando apropriado. A validação PostgreSQL está pendente. |
 | Piquete, transferência e movimentação | `lib/app_state.dart`, `lib/features/herd/herd_screen.dart` | `herd` piquetes, movimentações e transferências | SUPERSEDED | Os comandos novos têm escopo, versão e idempotência. |
-| Grupos manuais e por regra | `lib/app_state.dart` (`HerdGroup`, `HerdSmartRules`) | Piquetes cobrem apenas localização | MISSING | Definir grupos de manejo independentes de piquete, com regras configuráveis e vínculo por fazenda. |
+| Grupos manuais e por regra | `lib/app_state.dart` (`HerdGroup`, `HerdSmartRules`) | `/api/v1/herd/groups`, associação manual e regras dinâmicas por fazenda | FULL | Grupos têm versão, arquivamento e isolamento por tenant/fazenda. Filtros dinâmicos usam estado atual; idade é calculada na data de referência. |
 | Fotos locais de animais | `lib/models/animal.dart` | Nenhum contrato de anexo | PARTIAL | Caminhos locais são `CLIENT_ONLY`; referências seguras a objetos, autorização e ciclo de vida de anexos precisam de desenho próprio. |
 | Vacinação, vermifugação, produto e próxima aplicação | `lib/models/event.dart`, `lib/services/planner_service.dart` | Tratamentos, pendências, agenda e relatórios | SUPERSEDED | O backend registra `nextDueOn` e não impõe intervalo legal legado. |
 | Brucelose | `lib/features/reports/gedave_report_screen.dart` | Código estruturado, política etária e fatos efetivos | SUPERSEDED | A simples presença de texto no legado não prova cumprimento sanitário. |
@@ -32,3 +32,14 @@ Esta matriz compara a intenção funcional do código em `../bovnex2` com o back
 - O quadro atual por faixa usa `referenceDate` apenas para a idade. `positionSemantics=CURRENT_STATE_AGED_AT_REFERENCE` informa que a posição do rebanho é a atual. Uma consulta com referência anterior não reconstrói a fazenda naquela data.
 - A classificação de aftosa e os prazos de GEDAVE exigem validação regulatória atual. Não há base para publicá-los como conformidade oficial.
 - O gerador histórico em `lib/app_state.dart` e o quadro sanitário em `lib/features/reports/gedave_report_screen.dart` usam critérios diferentes de período; a divergência requer um contrato temporal explícito antes de portar a exportação.
+- Grupos `SMART` consultam o estado atual dos animais. `referenceDate` altera somente a idade calculada, nunca reconstrói associação, gestação ou estado histórico. A regra legada `onlyPendencies` significa perfil incompleto (nascimento ou mãe ausente); o contrato novo a chama `onlyMissingProfile`. `onlyReproductionActive` consulta uma gestação aberta real, evitando inferir estado atual por um evento antigo de inseminação.
+
+## Contrato de grupos de manejo
+
+- `POST /api/v1/herd/groups`: `{id,name,kind,rules?}`; `kind` é `MANUAL` ou `SMART`. O mesmo `id` e conteúdo podem ser reenviados sem duplicação. `kind` não muda depois da criação.
+- `GET /api/v1/herd/groups` e `GET /api/v1/herd/groups/{id}`: somente grupos ativos.
+- `PUT /api/v1/herd/groups/{id}`: substitui nome e regras com `{expectedVersion,name,rules?}`. Regras omitidas equivalem a regras vazias.
+- `POST /api/v1/herd/groups/{id}/archive`: arquiva com `{expectedVersion}`.
+- `PUT` e `DELETE /api/v1/herd/groups/{id}/animals/{animalId}`: adicionam ou removem um animal de grupo manual com `{expectedVersion}`. Animal e grupo precisam pertencer à mesma fazenda autorizada.
+- `GET /api/v1/herd/groups/{id}/animals?page=0&size=20&referenceDate=...`: lista estável e paginada. Para grupos por regra, filtra sexo, estado, idade em meses completos, gestação aberta e perfil incompleto; `positionSemantics=CURRENT_STATE_AGED_AT_REFERENCE`.
+- Escrita: `OWNER`, `ADMIN`, `MANAGER`. Leitura: esses papéis, `OPERATOR` e `VIEWER`. Toda operação usa o `TenantContext` autorizado, filtros explícitos e RLS.
