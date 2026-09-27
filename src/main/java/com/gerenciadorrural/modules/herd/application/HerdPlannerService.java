@@ -15,6 +15,7 @@ public class HerdPlannerService {
   private final HerdPlannerRepository repo;
   private final HerdPlannerOperationRepository operations;
   private final HerdAnimalProfileRepository animals;
+  private final HerdGroupRepository groups;
   private final ObjectMapper json;
 
   public HerdPlannerService(
@@ -22,11 +23,13 @@ public class HerdPlannerService {
       HerdPlannerRepository repo,
       HerdPlannerOperationRepository operations,
       HerdAnimalProfileRepository animals,
+      HerdGroupRepository groups,
       ObjectMapper json) {
     this.tx = tx;
     this.repo = repo;
     this.operations = operations;
     this.animals = animals;
+    this.groups = groups;
     this.json = json;
   }
 
@@ -41,6 +44,7 @@ public class HerdPlannerService {
           var replay = replay(c, v.operation, HerdPlannerOperation.Type.CREATE, v.payload, null);
           if (replay != null) return new Mutation(replay, true);
           animal(c, v.animal);
+          group(c, v.group);
           var item =
               repo.insert(
                   new HerdPlannerItem(
@@ -48,6 +52,7 @@ public class HerdPlannerService {
                       c.tenantId(),
                       c.farmId(),
                       v.animal,
+                      v.group,
                       v.type,
                       v.title,
                       v.notes,
@@ -79,6 +84,7 @@ public class HerdPlannerService {
           if (current.status() != HerdPlannerStatus.OPEN)
             throw new HerdPlannerExceptions.InvalidState();
           animal(c, v.animal);
+          group(c, v.group);
           var item =
               repo.update(
                       c.tenantId(),
@@ -89,7 +95,8 @@ public class HerdPlannerService {
                       v.title,
                       v.notes,
                       v.date,
-                      v.animal)
+                      v.animal,
+                      v.group)
                   .orElseThrow(HerdPlannerExceptions.Conflict::new);
           save(c, v.operation, HerdPlannerOperation.Type.CORRECT, item, v.payload);
           return new Mutation(item, false);
@@ -133,6 +140,7 @@ public class HerdPlannerService {
       HerdPlannerStatus s,
       HerdPlannerType t,
       UUID a,
+      UUID g,
       LocalDate from,
       LocalDate to,
       int page,
@@ -144,10 +152,15 @@ public class HerdPlannerService {
         c,
         () ->
             new Page(
-                repo.list(c.tenantId(), c.farmId(), s, t, a, from, to, size, (long) page * size),
+                repo.list(c.tenantId(), c.farmId(), s, t, a, g, from, to, size, (long) page * size),
                 page,
                 size,
-                repo.count(c.tenantId(), c.farmId(), s, t, a, from, to)));
+                repo.count(c.tenantId(), c.farmId(), s, t, a, g, from, to)));
+  }
+
+  public Page page(TenantContext c, HerdPlannerStatus s, HerdPlannerType t, UUID a,
+      LocalDate from, LocalDate to, int page, int size) {
+    return page(c, s, t, a, null, from, to, page, size);
   }
 
   public HerdPlannerItem detail(TenantContext c, UUID id) {
@@ -201,6 +214,7 @@ public class HerdPlannerService {
     payload.put("notes", notes);
     payload.put("scheduledFor", x.scheduledFor().toString());
     payload.put("animalId", x.animalId() == null ? null : x.animalId().toString());
+    if (x.groupId() != null) payload.put("groupId", x.groupId().toString());
     payload.put("expectedVersion", version ? x.expectedVersion() : null);
     return new Valid(
         x.operationId(),
@@ -210,12 +224,19 @@ public class HerdPlannerService {
         notes,
         x.scheduledFor(),
         x.animalId(),
+        x.groupId(),
         canonical(payload));
   }
 
   private void animal(TenantContext c, UUID id) {
     if (id != null && animals.findById(c.tenantId(), c.farmId(), id).isEmpty())
       throw new HerdAnimalNotFoundException();
+  }
+
+  private void group(TenantContext c, UUID id) {
+    if (id != null && groups.find(c.tenantId(), c.farmId(), id, false)
+        .filter(value -> value.status() == HerdGroup.Status.ACTIVE).isEmpty())
+      throw new HerdGroupNotFoundException();
   }
 
   private String canonical(Object x) {
@@ -259,6 +280,7 @@ public class HerdPlannerService {
       String notes,
       LocalDate date,
       UUID animal,
+      UUID group,
       String payload) {}
 
   public record Command(
@@ -268,7 +290,13 @@ public class HerdPlannerService {
       String title,
       String notes,
       LocalDate scheduledFor,
-      UUID animalId) {}
+      UUID animalId,
+      UUID groupId) {
+    public Command(UUID operationId, Long expectedVersion, HerdPlannerType type, String title,
+        String notes, LocalDate scheduledFor, UUID animalId) {
+      this(operationId, expectedVersion, type, title, notes, scheduledFor, animalId, null);
+    }
+  }
 
   public record Mutation(HerdPlannerItem item, boolean replay) {}
 

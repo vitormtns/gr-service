@@ -20,7 +20,8 @@ public interface HerdPlannerRepository {
       String title,
       String notes,
       LocalDate scheduledFor,
-      UUID animalId);
+      UUID animalId,
+      UUID groupId);
 
   Optional<HerdPlannerItem> transition(
       TenantId tenantId, UUID farmId, UUID id, long version, HerdPlannerStatus status);
@@ -31,6 +32,7 @@ public interface HerdPlannerRepository {
       HerdPlannerStatus status,
       HerdPlannerType type,
       UUID animalId,
+      UUID groupId,
       LocalDate from,
       LocalDate to,
       int limit,
@@ -42,6 +44,7 @@ public interface HerdPlannerRepository {
       HerdPlannerStatus status,
       HerdPlannerType type,
       UUID animalId,
+      UUID groupId,
       LocalDate from,
       LocalDate to);
 }

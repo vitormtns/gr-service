@@ -18,7 +18,7 @@ public final class HerdPlannerRequestDeserializer
 
   private static final Set<String> FIELDS =
       Set.of(
-          "operationId", "expectedVersion", "type", "title", "notes", "scheduledFor", "animalId");
+          "operationId", "expectedVersion", "type", "title", "notes", "scheduledFor", "animalId", "groupId");
 
   public HerdPlannerRequestDeserializer() {
     super(HerdPlannerController.PlannerRequest.class);
@@ -45,7 +45,8 @@ public final class HerdPlannerRequestDeserializer
           text(node, "title", true),
           text(node, "notes", false),
           date(node, "scheduledFor", true),
-          uuid(node, "animalId", false));
+          uuid(node, "animalId", false),
+          uuid(node, "groupId", false));
     } catch (Exception exception) {
       throw JsonMappingException.from(parser, "O comando do planejador é inválido", exception);
     }

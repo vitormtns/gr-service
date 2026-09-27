@@ -25,6 +25,7 @@ public class JdbcHerdPlannerRepository implements HerdPlannerRepository {
         new TenantId(r.getObject("tenant_id", UUID.class)),
         r.getObject("farm_id", UUID.class),
         r.getObject("animal_id", UUID.class),
+        r.getObject("group_id", UUID.class),
         HerdPlannerType.valueOf(r.getString("type")),
         r.getString("title"),
         r.getString("notes"),
@@ -56,11 +57,12 @@ public class JdbcHerdPlannerRepository implements HerdPlannerRepository {
   public HerdPlannerItem insert(HerdPlannerItem x) {
     return j.query(
             "insert into"
-                + " app.herd_planner_items(id,tenant_id,farm_id,animal_id,type,title,notes,scheduled_for,created_by)"
-                + " values(:id,:tenant,:farm,:animal,:type,:title,:notes,:date,:actor) returning *",
+                + " app.herd_planner_items(id,tenant_id,farm_id,animal_id,group_id,type,title,notes,scheduled_for,created_by)"
+                + " values(:id,:tenant,:farm,:animal,:group,:type,:title,:notes,:date,:actor) returning *",
             p(x.tenantId(), x.farmId())
                 .addValue("id", x.id())
                 .addValue("animal", x.animalId())
+                .addValue("group", x.groupId())
                 .addValue("type", x.type().name())
                 .addValue("title", x.title())
                 .addValue("notes", x.notes())
@@ -79,11 +81,12 @@ public class JdbcHerdPlannerRepository implements HerdPlannerRepository {
       String title,
       String notes,
       LocalDate date,
-      UUID animal) {
+      UUID animal,
+      UUID group) {
     return j
         .query(
             "update app.herd_planner_items set"
-                + " type=:type,title=:title,notes=:notes,scheduled_for=:date,animal_id=:animal,version=version+1,updated_at=now()"
+                + " type=:type,title=:title,notes=:notes,scheduled_for=:date,animal_id=:animal,group_id=:group,version=version+1,updated_at=now()"
                 + " where tenant_id=:tenant and farm_id=:farm and id=:id and status='OPEN' and"
                 + " version=:v returning *",
             p(t, f)
@@ -93,7 +96,8 @@ public class JdbcHerdPlannerRepository implements HerdPlannerRepository {
                 .addValue("title", title)
                 .addValue("notes", notes)
                 .addValue("date", date)
-                .addValue("animal", animal),
+                .addValue("animal", animal)
+                .addValue("group", group),
             this::map)
         .stream()
         .findFirst();
@@ -120,12 +124,14 @@ public class JdbcHerdPlannerRepository implements HerdPlannerRepository {
       HerdPlannerStatus s,
       HerdPlannerType type,
       UUID a,
+      UUID g,
       LocalDate from,
       LocalDate to) {
     return p(t, f)
         .addValue("status", s == null ? null : s.name())
         .addValue("type", type == null ? null : type.name())
         .addValue("animal", a)
+        .addValue("group", g)
         .addValue("from", from)
         .addValue("to", to);
   }
@@ -133,7 +139,9 @@ public class JdbcHerdPlannerRepository implements HerdPlannerRepository {
   private static final String WHERE =
       " where tenant_id=:tenant and farm_id=:farm and (cast(:status as text) is null or"
           + " status=:status) and (cast(:type as text) is null or type=:type) and (cast(:animal as"
-          + " uuid) is null or animal_id=:animal) and (cast(:from as date) is null or"
+          + " uuid) is null or animal_id=:animal) and"
+          + " (cast(:group as uuid) is null or group_id=:group) and"
+          + " (cast(:from as date) is null or"
           + " scheduled_for>=:from) and (cast(:to as date) is null or scheduled_for<=:to) ";
 
   public List<HerdPlannerItem> list(
@@ -142,6 +150,7 @@ public class JdbcHerdPlannerRepository implements HerdPlannerRepository {
       HerdPlannerStatus s,
       HerdPlannerType type,
       UUID a,
+      UUID g,
       LocalDate from,
       LocalDate to,
       int limit,
@@ -150,7 +159,7 @@ public class JdbcHerdPlannerRepository implements HerdPlannerRepository {
         "select * from app.herd_planner_items"
             + WHERE
             + "order by scheduled_for,created_at,id limit :limit offset :offset",
-        filters(t, f, s, type, a, from, to).addValue("limit", limit).addValue("offset", offset),
+        filters(t, f, s, type, a, g, from, to).addValue("limit", limit).addValue("offset", offset),
         this::map);
   }
 
@@ -160,12 +169,13 @@ public class JdbcHerdPlannerRepository implements HerdPlannerRepository {
       HerdPlannerStatus s,
       HerdPlannerType type,
       UUID a,
+      UUID g,
       LocalDate from,
       LocalDate to) {
     Long x =
         j.queryForObject(
             "select count(*) from app.herd_planner_items" + WHERE,
-            filters(t, f, s, type, a, from, to),
+            filters(t, f, s, type, a, g, from, to),
             Long.class);
     return x == null ? 0 : x;
   }
