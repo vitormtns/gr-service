@@ -311,6 +311,37 @@ class HerdPlannerVerticalIntegrationTest extends SpringPostgresTestSupport {
         return UUID.fromString(body(result).path("id").asText());
     }
 
+    @Test
+    void acceptsPlannerGroupLinkAndRejectsAnotherFarmsGroup() throws Exception {
+        UUID groupA = UUID.randomUUID();
+        UUID groupB = UUID.randomUUID();
+        try (Connection connection = PostgresTestEnvironment.adminConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     insert into app.herd_groups(id,tenant_id,farm_id,name,kind)
+                     values(?,?,?,'Lote A','MANUAL'),(?,?,?,'Lote B','MANUAL')
+                     """)) {
+            statement.setObject(1, groupA);
+            statement.setObject(2, tenant);
+            statement.setObject(3, farmA);
+            statement.setObject(4, groupB);
+            statement.setObject(5, tenant);
+            statement.setObject(6, farmB);
+            statement.executeUpdate();
+        }
+        String base = plannerBody(UUID.randomUUID(), null, "GENERAL", "Manejar lote", null,
+                LocalDate.now(), null);
+        MvcResult created = request(farmA, post("/api/v1/herd/planner-items"),
+                base.replace("}", ",\"groupId\":\"" + groupA + "\"}"));
+        assertStatus(created, 201);
+        assertThat(body(created).path("groupId").asText()).isEqualTo(groupA.toString());
+        assertThat(body(request(farmA, get("/api/v1/herd/planner-items?groupId=" + groupA), null))
+                .path("totalElements").asLong()).isEqualTo(1);
+        assertError(request(farmA, post("/api/v1/herd/planner-items"),
+                plannerBody(UUID.randomUUID(), null, "GENERAL", "Outro lote", null,
+                        LocalDate.now(), null).replace("}", ",\"groupId\":\"" + groupB + "\"}")),
+                404, "HERD_GROUP_NOT_FOUND");
+    }
+
     private void seedCurrentVaccinationAndWeight(UUID animal) throws Exception {
         try (Connection connection = PostgresTestEnvironment.adminConnection();
              PreparedStatement statement = connection.prepareStatement("""

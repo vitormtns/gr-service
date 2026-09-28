@@ -110,6 +110,21 @@ class ManageHerdIntelligenceHealthProcedureTest {
     }
 
     @Test
+    void recordsHistoricalAftosaWithoutAnInferredDueDate() {
+        UUID operation = UUID.randomUUID();
+        service.health(c, operation, HealthTreatmentType.VACCINATION,
+                HealthProcedureCode.FOOT_AND_MOUTH_DISEASE, day, "Registro histórico", null,
+                null, null, cmd());
+        verify(repo).treatment(eq(tenant), eq(farm), eq(animal), eq(operation),
+                eq(HealthTreatmentType.VACCINATION), eq(HealthProcedureCode.FOOT_AND_MOUTH_DISEASE),
+                eq(day), eq("Registro histórico"), isNull(), isNull(), isNull(), eq(user));
+        assertThat(savedCanonical()).contains("\"procedureCode\":\"FOOT_AND_MOUTH_DISEASE\"");
+        assertThatThrownBy(() -> service.health(c, UUID.randomUUID(), HealthTreatmentType.DEWORMING,
+                HealthProcedureCode.FOOT_AND_MOUTH_DISEASE, day, null, null, null, null, cmd()))
+                .isInstanceOf(HerdAnimalCommandInvalidException.class);
+    }
+
+    @Test
     void replaysIdenticalNullProcedureWithoutConflict() {
         UUID op = UUID.randomUUID();
         service.health(c, op, HealthTreatmentType.VACCINATION, null, day, null, null, null, null, cmd());

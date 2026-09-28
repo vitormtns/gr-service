@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gerenciadorrural.modules.herd.application.HerdAnimalCommandInvalidException;
 import com.gerenciadorrural.modules.herd.application.HerdPlannerExceptions;
 import com.gerenciadorrural.modules.herd.application.HerdPlannerService;
+import com.gerenciadorrural.modules.herd.application.HerdGroupNotFoundException;
 import com.gerenciadorrural.modules.herd.domain.HerdPlannerStatus;
 import com.gerenciadorrural.modules.herd.domain.HerdPlannerType;
 import com.gerenciadorrural.modules.herd.infrastructure.JdbcHerdAnimalProfileRepository;
 import com.gerenciadorrural.modules.herd.infrastructure.JdbcHerdPlannerOperationRepository;
 import com.gerenciadorrural.modules.herd.infrastructure.JdbcHerdPlannerRepository;
+import com.gerenciadorrural.modules.herd.infrastructure.JdbcHerdGroupRepository;
 import com.gerenciadorrural.shared.infrastructure.database.DatabaseAccessProperties;
 import com.gerenciadorrural.shared.infrastructure.database.SpringTenantTransactionExecutor;
 import com.gerenciadorrural.shared.infrastructure.database.TransactionalDatabaseRole;
@@ -75,6 +77,7 @@ class HerdPlannerServiceIntegrationTest extends PostgresMigrationTestSupport {
                 new JdbcHerdPlannerRepository(namedJdbc),
                 new JdbcHerdPlannerOperationRepository(namedJdbc),
                 new JdbcHerdAnimalProfileRepository(namedJdbc),
+                new JdbcHerdGroupRepository(namedJdbc),
                 new ObjectMapper()
         );
     }
@@ -351,6 +354,36 @@ class HerdPlannerServiceIntegrationTest extends PostgresMigrationTestSupport {
                 new TenantId(fixture.tenant()), UUID.randomUUID(), otherFarm, UUID.randomUUID(),
                 "OWNER", "ALL_FARMS");
         assertThat(service.page(otherFarmContext, null, null, null, null, null, 0, 10).items()).isEmpty();
+    }
+
+    @Test
+    void linksPlannerItemToAuthorizedGroupWithStableReplayAndFiltering() throws Exception {
+        Fixture fixture = fixture();
+        UUID group = UUID.randomUUID();
+        executeAsAdmin("insert into app.herd_groups(id,tenant_id,farm_id,name,kind) values(?,?,?,'Matrizes','SMART')",
+                group, fixture.tenant(), fixture.farm());
+        UUID operation = UUID.randomUUID();
+        var command = new HerdPlannerService.Command(operation, null, HerdPlannerType.GENERAL,
+                "Revisar matrizes", null, LocalDate.of(2026, 9, 28), null, group);
+        var created = service.create(fixture.context(), command);
+        assertThat(created.item().groupId()).isEqualTo(group);
+        assertThat(service.create(fixture.context(), command).replay()).isTrue();
+        assertThat(service.page(fixture.context(), null, null, null, group, null, null, 0, 20)
+                .items()).extracting(item -> item.id()).containsExactly(created.item().id());
+        assertThatThrownBy(() -> service.create(fixture.context(),
+                new HerdPlannerService.Command(UUID.randomUUID(), null, HerdPlannerType.GENERAL,
+                        "Grupo inexistente", null, LocalDate.of(2026, 9, 28), null, UUID.randomUUID())))
+                .isInstanceOf(HerdGroupNotFoundException.class);
+        UUID otherFarm = UUID.randomUUID();
+        UUID otherGroup = UUID.randomUUID();
+        executeAsAdmin("insert into app.farms(id,tenant_id,name,status) values(?,?,?,'ACTIVE')",
+                otherFarm, fixture.tenant(), "Outra fazenda");
+        executeAsAdmin("insert into app.herd_groups(id,tenant_id,farm_id,name,kind) values(?,?,?,'Outro','MANUAL')",
+                otherGroup, fixture.tenant(), otherFarm);
+        assertThatThrownBy(() -> service.create(fixture.context(),
+                new HerdPlannerService.Command(UUID.randomUUID(), null, HerdPlannerType.GENERAL,
+                        "Outra fazenda", null, LocalDate.of(2026, 9, 28), null, otherGroup)))
+                .isInstanceOf(HerdGroupNotFoundException.class);
     }
 
     private Fixture fixture() throws Exception {

@@ -20,6 +20,15 @@ public interface HerdReportRepository {
       int limit,
       long offset);
 
+  List<AgeSexCount> currentAgeSexCounts(TenantId tenantId, UUID farmId);
+
+  List<AgeSexCount> historicalAgeSexCounts(TenantId tenantId, UUID farmId, LocalDate asOf);
+
+  List<ProcedureAgeSexCount> currentProcedureAgeSexCounts(TenantId tenantId, UUID farmId,
+      HealthProcedureCode procedureCode);
+
+  EventLedger eventLedger(TenantId tenantId, UUID farmId, LocalDate from, LocalDate to);
+
   ReportPage<LifecycleSummary, LifecycleItem> lifecycle(
       TenantId tenantId,
       UUID farmId,
@@ -67,6 +76,7 @@ public interface HerdReportRepository {
       LocalDate from,
       LocalDate to,
       HealthTreatmentType treatmentType,
+      HealthProcedureCode procedureCode,
       UUID animalId,
       int limit,
       long offset);
@@ -125,6 +135,14 @@ public interface HerdReportRepository {
 
   record PaddockTotal(PaddockReference paddock, long total) {}
 
+  record AgeSexCount(HerdAnimalSex sex, LocalDate birthDate, long count) {}
+
+  record ProcedureAgeSexCount(HerdAnimalSex sex, LocalDate birthDate,
+      boolean withRecordedTreatment, long count) {}
+
+  record EventLedger(long openingAnimals, long registeredAnimals, long births,
+      long transfersIn, long sales, long deaths, long transfersOut, long closingAnimals) {}
+
   record HerdPositionSummary(
       long totalActiveAnimals,
       Map<HerdReportCategory, Long> totalsByCategory,
@@ -139,7 +157,10 @@ public interface HerdReportRepository {
       LocalDate birthDate,
       PaddockReference paddock) {}
 
-  record LifecycleSummary(Map<LifecycleEvent, Long> countsByEventType, long totalAffectedAnimals) {}
+  record LifecycleSummary(Map<LifecycleEvent, Long> countsByEventType,
+      long totalAffectedAnimals, BigDecimal totalSaleAmount, BigDecimal averageSaleAmount,
+      long salesWithAmount, Map<String, Long> deathsByReason,
+      Map<String, Long> salesByChannel) {}
 
   record LifecycleItem(
       UUID id,
@@ -147,7 +168,11 @@ public interface HerdReportRepository {
       LifecycleEvent event,
       LocalDate occurredOn,
       Instant recordedAt,
-      String notes) {}
+      String notes,
+      String deathReason,
+      SaleChannel saleChannel,
+      String saleBuyer,
+      BigDecimal saleAmount) {}
 
   record MovementSummary(long movementCount, long distinctAnimalsMoved) {}
 
@@ -196,6 +221,7 @@ public interface HerdReportRepository {
       UUID id,
       AnimalReference animal,
       HealthTreatmentType treatmentType,
+      HealthProcedureCode procedureCode,
       LocalDate occurredOn,
       Instant recordedAt,
       String product,

@@ -22,6 +22,37 @@ public class HerdReportController {
     this.reports = reports;
   }
 
+  @GetMapping("/current-age-sex-balance")
+  ResponseEntity<?> currentAgeSexBalance(
+      @ResolvedTenantContext TenantContext context,
+      @RequestParam(required = false) LocalDate referenceDate,
+      HttpServletRequest request) {
+    parameters(request, "referenceDate");
+    return ok(reports.currentAgeSexBalance(context, referenceDate));
+  }
+
+  @GetMapping("/period-reconciliation")
+  ResponseEntity<?> periodReconciliation(@ResolvedTenantContext TenantContext context,
+      @RequestParam LocalDate from, @RequestParam LocalDate to, HttpServletRequest request) {
+    parameters(request, "from", "to");
+    return ok(reports.periodReconciliation(context, from, to));
+  }
+
+  @GetMapping("/historical-age-sex-balance")
+  ResponseEntity<?> historicalAgeSexBalance(@ResolvedTenantContext TenantContext context,
+      @RequestParam LocalDate asOf, HttpServletRequest request) {
+    parameters(request, "asOf");
+    return ok(reports.historicalAgeSexBalance(context, asOf));
+  }
+
+  @GetMapping("/current-procedure-coverage")
+  ResponseEntity<?> currentProcedureCoverage(@ResolvedTenantContext TenantContext context,
+      @RequestParam HealthProcedureCode procedureCode,
+      @RequestParam(required = false) LocalDate referenceDate, HttpServletRequest request) {
+    parameters(request, "procedureCode", "referenceDate");
+    return ok(reports.currentProcedureCoverage(context, procedureCode, referenceDate));
+  }
+
   @GetMapping("/herd-position")
   ResponseEntity<?> herdPosition(
       @ResolvedTenantContext TenantContext context,
@@ -115,12 +146,13 @@ public class HerdReportController {
       @RequestParam(required = false) LocalDate from,
       @RequestParam(required = false) LocalDate to,
       @RequestParam(required = false) HealthTreatmentType treatmentType,
+      @RequestParam(required = false) HealthProcedureCode procedureCode,
       @RequestParam(required = false) UUID animalId,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size,
       HttpServletRequest request) {
-    parameters(request, "from", "to", "treatmentType", "animalId", "page", "size");
-    return ok(reports.health(context, from, to, treatmentType, animalId, page, size));
+    parameters(request, "from", "to", "treatmentType", "procedureCode", "animalId", "page", "size");
+    return ok(reports.health(context, from, to, treatmentType, procedureCode, animalId, page, size));
   }
 
   @GetMapping("/reproduction")

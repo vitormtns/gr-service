@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/herd/planner-items")
 public class HerdPlannerController {
   private static final Set<String> LIST_PARAMETERS =
-      Set.of("status", "type", "animalId", "from", "to", "page", "size");
+      Set.of("status", "type", "animalId", "groupId", "from", "to", "page", "size");
 
   private final HerdPlannerService service;
 
@@ -95,6 +95,7 @@ public class HerdPlannerController {
       @RequestParam(required = false) HerdPlannerStatus status,
       @RequestParam(required = false) HerdPlannerType type,
       @RequestParam(required = false) UUID animalId,
+      @RequestParam(required = false) UUID groupId,
       @RequestParam(required = false) LocalDate from,
       @RequestParam(required = false) LocalDate to,
       @RequestParam(defaultValue = "0") int page,
@@ -104,7 +105,7 @@ public class HerdPlannerController {
         || request.getParameterMap().values().stream().anyMatch(values -> values.length != 1)) {
       throw new HerdAnimalQueryException();
     }
-    var result = service.page(context, status, type, animalId, from, to, page, size);
+    var result = service.page(context, status, type, animalId, groupId, from, to, page, size);
     int totalPages = Math.toIntExact((result.totalElements() + result.size() - 1) / result.size());
     return ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
@@ -135,10 +136,11 @@ public class HerdPlannerController {
       String title,
       String notes,
       LocalDate scheduledFor,
-      UUID animalId) {
+      UUID animalId,
+      UUID groupId) {
     HerdPlannerService.Command toCommand() {
       return new HerdPlannerService.Command(
-          operationId, expectedVersion, type, title, notes, scheduledFor, animalId);
+          operationId, expectedVersion, type, title, notes, scheduledFor, animalId, groupId);
     }
   }
 
@@ -153,6 +155,7 @@ public class HerdPlannerController {
       LocalDate scheduledFor,
       HerdPlannerStatus status,
       UUID animalId,
+      UUID groupId,
       long version,
       Instant createdAt,
       Instant updatedAt,
@@ -169,6 +172,7 @@ public class HerdPlannerController {
           item.scheduledFor(),
           item.status(),
           item.animalId(),
+          item.groupId(),
           item.version(),
           item.createdAt(),
           item.updatedAt(),

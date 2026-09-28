@@ -10,6 +10,7 @@ public record HerdPlannerItem(
     TenantId tenantId,
     UUID farmId,
     UUID animalId,
+    UUID groupId,
     HerdPlannerType type,
     String title,
     String notes,

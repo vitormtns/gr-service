@@ -70,6 +70,99 @@ class HerdReportControllerContractTest {
   }
 
   @Test
+  void exposesCurrentBalanceWithoutClaimingHistoricalOrOfficialState() throws Exception {
+    when(repository.currentAgeSexCounts(any(), any())).thenReturn(List.of(
+        new AgeSexCount(HerdAnimalSex.FEMALE, LocalDate.of(2026, 6, 13), 2),
+        new AgeSexCount(HerdAnimalSex.MALE, null, 1),
+        new AgeSexCount(HerdAnimalSex.MALE, LocalDate.of(2024, 1, 1), 3)));
+
+    mvc.perform(get("/api/v1/herd/reports/current-age-sex-balance?referenceDate=2026-09-13"))
+        .andExpect(status().isOk())
+        .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+        .andExpect(jsonPath("$.positionSemantics").value("CURRENT_STATE_AGED_AT_REFERENCE"))
+        .andExpect(jsonPath("$.totalActiveAnimals").value(6))
+        .andExpect(jsonPath("$.unknownBirthDate").value(1))
+        .andExpect(jsonPath("$.cells[3].ageBand").value("MONTHS_3_8"))
+        .andExpect(jsonPath("$.cells[3].sex").value("FEMALE"))
+        .andExpect(jsonPath("$.cells[3].count").value(2));
+
+    mvc.perform(get("/api/v1/herd/reports/current-age-sex-balance?referenceDate=2026-09-14"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/herd/reports/current-age-sex-balance?unknown=true"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void reconstructsHistoricalBalanceFromEventsWithExplicitProfileSemantics() throws Exception {
+    LocalDate asOf = LocalDate.of(2026, 9, 1);
+    when(repository.historicalAgeSexCounts(context.tenantId(), context.farmId(), asOf))
+        .thenReturn(List.of(new AgeSexCount(HerdAnimalSex.FEMALE, LocalDate.of(2024, 1, 1), 2)));
+    mvc.perform(get("/api/v1/herd/reports/historical-age-sex-balance?asOf=2026-09-01"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.positionSemantics")
+            .value("RECORDED_FARM_EVENTS_WITH_CURRENTLY_CORRECTED_PROFILE"))
+        .andExpect(jsonPath("$.totalActiveAnimals").value(2));
+    mvc.perform(get("/api/v1/herd/reports/historical-age-sex-balance?asOf=2026-09-14"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/herd/reports/historical-age-sex-balance?unexpected=true"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void reportsRecordedProcedureCoverageWithoutCallingItCompliance() throws Exception {
+    when(repository.currentProcedureAgeSexCounts(context.tenantId(), context.farmId(),
+        HealthProcedureCode.BRUCELLOSIS)).thenReturn(List.of(
+            new ProcedureAgeSexCount(HerdAnimalSex.FEMALE, LocalDate.of(2026, 4, 1), true, 1),
+            new ProcedureAgeSexCount(HerdAnimalSex.FEMALE, LocalDate.of(2026, 4, 1), false, 2)));
+    mvc.perform(get("/api/v1/herd/reports/current-procedure-coverage"
+            + "?procedureCode=BRUCELLOSIS&referenceDate=2026-09-13"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.positionSemantics")
+            .value("CURRENT_STATE_AGED_AT_REFERENCE_EFFECTIVE_RECORDED_TREATMENTS"))
+        .andExpect(jsonPath("$.totalActiveAnimals").value(3))
+        .andExpect(jsonPath("$.withRecordedTreatment").value(1))
+        .andExpect(jsonPath("$.withoutRecordedTreatment").value(2));
+    mvc.perform(get("/api/v1/herd/reports/current-procedure-coverage?procedureCode=BRUCELLOSIS"
+            + "&referenceDate=2026-09-14"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/herd/reports/current-procedure-coverage?procedureCode=BRUCELLOSIS"
+            + "&tenantId=" + UUID.randomUUID()))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void exposesPeriodEventReconciliationWithExplicitSemantics() throws Exception {
+    LocalDate from = LocalDate.of(2026, 9, 1);
+    LocalDate to = LocalDate.of(2026, 9, 13);
+    when(repository.eventLedger(context.tenantId(), context.farmId(), from, to))
+        .thenReturn(new EventLedger(10, 1, 2, 1, 3, 1, 1, 9));
+    mvc.perform(get("/api/v1/herd/reports/period-reconciliation?from=2026-09-01&to=2026-09-13"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.positionSemantics").value("RECORDED_FARM_EVENT_LEDGER"))
+        .andExpect(jsonPath("$.balance.openingAnimals").value(10))
+        .andExpect(jsonPath("$.balance.closingAnimals").value(9));
+    mvc.perform(get("/api/v1/herd/reports/period-reconciliation?from=2026-09-01"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/herd/reports/period-reconciliation?from=2026-09-01&to=2026-09-14"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/herd/reports/period-reconciliation?from=2026-09-01&to=2026-09-13&tenantId=" + UUID.randomUUID()))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void filtersEffectiveHealthFactsByStructuredProcedure() throws Exception {
+    when(repository.health(eq(context.tenantId()), eq(context.farmId()), any(), any(),
+        eq(HealthTreatmentType.VACCINATION), eq(HealthProcedureCode.FOOT_AND_MOUTH_DISEASE),
+        isNull(), eq(20), eq(0L)))
+        .thenReturn(new ReportPage<>(new HealthSummary(0, 0, Map.of()), List.of(), 0));
+    mvc.perform(get("/api/v1/herd/reports/health?treatmentType=VACCINATION&procedureCode=FOOT_AND_MOUTH_DISEASE"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.summary.treatmentsCount").value(0));
+    mvc.perform(get("/api/v1/herd/reports/health?procedureCode=UNKNOWN"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void rejectsMalformedUnknownRepeatedAndOutOfRangeFilters() throws Exception {
     List<MockHttpServletRequestBuilder> invalid =
         List.of(

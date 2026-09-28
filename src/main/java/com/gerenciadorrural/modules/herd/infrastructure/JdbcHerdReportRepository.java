@@ -34,6 +34,107 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
   }
 
   @Override
+  public List<AgeSexCount> currentAgeSexCounts(TenantId tenant, UUID farm) {
+    return jdbc.query(
+        """
+        select a.sex, a.birth_date, count(*) total
+          from app.animals a
+         where a.tenant_id=:tenant and a.farm_id=:farm and a.status='ACTIVE'
+         group by a.sex, a.birth_date
+         order by a.sex, a.birth_date
+        """,
+        base(tenant, farm),
+        (rs, row) -> new AgeSexCount(
+            HerdAnimalSex.valueOf(rs.getString("sex")),
+            rs.getObject("birth_date", LocalDate.class),
+            rs.getLong("total")));
+  }
+
+  @Override
+  public List<AgeSexCount> historicalAgeSexCounts(TenantId tenant, UUID farm, LocalDate asOf) {
+    return jdbc.query("""
+        with last_flow as (
+          select distinct on (animal_id) animal_id, event_type
+            from app.animal_events
+           where tenant_id = :tenant and farm_id = :farm
+             and event_type in ('CREATED','BORN','TRANSFERRED_IN','SOLD','DECEASED','TRANSFERRED_OUT')
+             and coalesce(occurred_on, recorded_at::date) <= :asOf
+           order by animal_id, coalesce(occurred_on, recorded_at::date) desc,
+                    recorded_at desc, id desc
+        )
+        select a.sex, a.birth_date, count(*) total
+          from last_flow f
+          join app.animals a on a.tenant_id = :tenant and a.id = f.animal_id
+         where f.event_type in ('CREATED','BORN','TRANSFERRED_IN')
+         group by a.sex, a.birth_date
+         order by a.sex, a.birth_date
+        """, base(tenant, farm).addValue("asOf", asOf), (rs, row) -> new AgeSexCount(
+            HerdAnimalSex.valueOf(rs.getString("sex")),
+            rs.getObject("birth_date", LocalDate.class), rs.getLong("total")));
+  }
+
+  @Override
+  public List<ProcedureAgeSexCount> currentProcedureAgeSexCounts(TenantId tenant, UUID farm,
+      HealthProcedureCode code) {
+    return jdbc.query("""
+        with per_animal as (
+        select a.sex, a.birth_date,
+               exists (
+                 select 1 from app.animal_health_treatments h
+                  where h.tenant_id = a.tenant_id and h.farm_id = a.farm_id
+                    and h.animal_id = a.id and h.treatment_type = 'VACCINATION'
+                    and h.procedure_code = :code
+                    and not exists (select 1 from app.animal_health_treatment_retractions r
+                                     where r.tenant_id = h.tenant_id and r.farm_id = h.farm_id
+                                       and r.treatment_id = h.id)
+               ) with_recorded_treatment
+          from app.animals a
+         where a.tenant_id = :tenant and a.farm_id = :farm and a.status = 'ACTIVE'
+        )
+        select sex, birth_date, with_recorded_treatment, count(*) total
+          from per_animal
+         group by sex, birth_date, with_recorded_treatment
+         order by sex, birth_date, with_recorded_treatment
+        """, base(tenant, farm).addValue("code", code.name()), (rs, row) ->
+            new ProcedureAgeSexCount(HerdAnimalSex.valueOf(rs.getString("sex")),
+                rs.getObject("birth_date", LocalDate.class),
+                rs.getBoolean("with_recorded_treatment"), rs.getLong("total")));
+  }
+
+  @Override
+  public EventLedger eventLedger(TenantId tenant, UUID farm, LocalDate from, LocalDate to) {
+    MapSqlParameterSource parameters = base(tenant, farm).addValue("from", from).addValue("to", to);
+    return jdbc.queryForObject("""
+        with flow as (
+          select e.event_type,coalesce(e.occurred_on,e.recorded_at::date) effective_on
+            from app.animal_events e
+           where e.tenant_id=:tenant and e.farm_id=:farm
+             and e.event_type in ('CREATED','BORN','TRANSFERRED_IN','SOLD','DECEASED','TRANSFERRED_OUT')
+             and (e.occurred_on<=:to or (e.occurred_on is null and e.recorded_at::date<=:to))
+             and (e.event_type <> 'CREATED' or not exists (
+               select 1 from app.animal_events birth
+                where birth.tenant_id=e.tenant_id and birth.farm_id=e.farm_id
+                  and birth.animal_id=e.animal_id and birth.event_type='BORN'))
+        )
+        select
+          count(*) filter (where effective_on<:from and event_type in ('CREATED','BORN','TRANSFERRED_IN'))
+            - count(*) filter (where effective_on<:from and event_type in ('SOLD','DECEASED','TRANSFERRED_OUT')) opening,
+          count(*) filter (where effective_on between :from and :to and event_type='CREATED') registered,
+          count(*) filter (where effective_on between :from and :to and event_type='BORN') births,
+          count(*) filter (where effective_on between :from and :to and event_type='TRANSFERRED_IN') transfers_in,
+          count(*) filter (where effective_on between :from and :to and event_type='SOLD') sales,
+          count(*) filter (where effective_on between :from and :to and event_type='DECEASED') deaths,
+          count(*) filter (where effective_on between :from and :to and event_type='TRANSFERRED_OUT') transfers_out,
+          count(*) filter (where event_type in ('CREATED','BORN','TRANSFERRED_IN'))
+            - count(*) filter (where event_type in ('SOLD','DECEASED','TRANSFERRED_OUT')) closing
+        from flow
+        """, parameters, (row, number) -> new EventLedger(row.getLong("opening"),
+        row.getLong("registered"), row.getLong("births"), row.getLong("transfers_in"),
+        row.getLong("sales"), row.getLong("deaths"), row.getLong("transfers_out"),
+        row.getLong("closing")));
+  }
+
+  @Override
   public ReportPage<HerdPositionSummary, HerdPositionItem> herdPosition(
       TenantId tenant,
       UUID farm,
@@ -142,13 +243,40 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
     long affected =
         number("select count(distinct e.animal_id) from app.animal_events e" + where, p);
     long total = number("select count(*) from app.animal_events e" + where, p);
+    BigDecimal[] saleValues = jdbc.queryForObject(
+        "select coalesce(sum((e.payload->>'saleAmount')::numeric) filter (where e.event_type='SOLD' and e.payload->>'saleAmount' is not null),0) total_amount,"
+            + " count(*) filter (where e.event_type='SOLD' and e.payload->>'saleAmount' is not null) priced_sales from app.animal_events e"
+            + where, p, (rs, row) -> new BigDecimal[] {rs.getBigDecimal("total_amount"),
+                BigDecimal.valueOf(rs.getLong("priced_sales"))});
+    BigDecimal totalSaleAmount = saleValues[0];
+    long salesWithAmount = saleValues[1].longValueExact();
+    BigDecimal averageSaleAmount = salesWithAmount == 0 ? null
+        : totalSaleAmount.divide(BigDecimal.valueOf(salesWithAmount), 2,
+            java.math.RoundingMode.HALF_UP);
+    Map<String, Long> deathsByReason = new LinkedHashMap<>();
+    jdbc.query("""
+        select coalesce(nullif(btrim(e.payload->>'deathReason'),''),'UNSPECIFIED') reason,
+               count(*) total
+          from app.animal_events e
+        """ + where + " and e.event_type='DECEASED' group by reason order by reason", p,
+        (RowCallbackHandler) rs -> deathsByReason.put(rs.getString("reason"), rs.getLong("total")));
+    Map<String, Long> salesByChannel = new LinkedHashMap<>();
+    jdbc.query("""
+        select coalesce(nullif(e.payload->>'saleChannel',''),'UNSPECIFIED') channel,
+               count(*) total
+          from app.animal_events e
+        """ + where + " and e.event_type='SOLD' group by channel order by channel", p,
+        (RowCallbackHandler) rs -> salesByChannel.put(rs.getString("channel"), rs.getLong("total")));
     List<LifecycleItem> items =
         jdbc.query(
             HISTORICAL_SNAPSHOTS
                 + """
                 select e.id,e.animal_id,s.identification,s.name,e.event_type,
                        coalesce(e.occurred_on,e.recorded_at::date) effective_on,e.recorded_at,
-                       e.payload->>'notes' notes
+                       e.payload->>'notes' notes, e.payload->>'deathReason' death_reason,
+                       e.payload->>'saleChannel' sale_channel,
+                       e.payload->>'saleBuyer' sale_buyer,
+                       e.payload->>'saleAmount' sale_amount
                   from app.animal_events e left join snapshots s on s.animal_id=e.animal_id
                 """
                 + where
@@ -161,8 +289,15 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
                     LifecycleEvent.valueOf(rs.getString("event_type")),
                     rs.getObject("effective_on", LocalDate.class),
                     instant(rs, "recorded_at"),
-                    rs.getString("notes")));
-    return new ReportPage<>(new LifecycleSummary(counts, affected), items, total);
+                    rs.getString("notes"),
+                    rs.getString("death_reason"),
+                    rs.getString("sale_channel") == null ? null
+                        : SaleChannel.valueOf(rs.getString("sale_channel")),
+                    rs.getString("sale_buyer"),
+                    rs.getString("sale_amount") == null ? null
+                        : new BigDecimal(rs.getString("sale_amount"))));
+    return new ReportPage<>(new LifecycleSummary(counts, affected, totalSaleAmount,
+        averageSaleAmount, salesWithAmount, deathsByReason, salesByChannel), items, total);
   }
 
   @Override
@@ -333,12 +468,14 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
       LocalDate from,
       LocalDate to,
       HealthTreatmentType type,
+      HealthProcedureCode procedureCode,
       UUID animal,
       int limit,
       long offset) {
     MapSqlParameterSource p =
         dated(tenant, farm, from, to)
             .addValue("type", type == null ? null : type.name())
+            .addValue("procedureCode", procedureCode == null ? null : procedureCode.name())
             .addValue("animal", animal)
             .addValue("limit", limit)
             .addValue("offset", offset);
@@ -346,7 +483,11 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
         """
          where h.tenant_id=:tenant and h.farm_id=:farm and h.occurred_on between :from and :to
            and (cast(:type as text) is null or h.treatment_type=:type)
+           and (cast(:procedureCode as text) is null or h.procedure_code=:procedureCode)
            and (cast(:animal as uuid) is null or h.animal_id=:animal)
+           and not exists (select 1 from app.animal_health_treatment_retractions r
+                            where r.tenant_id=h.tenant_id and r.farm_id=h.farm_id
+                              and r.treatment_id=h.id)
         """;
     long total = number("select count(*) from app.animal_health_treatments h" + where, p);
     long animals =
@@ -368,7 +509,7 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
         jdbc.query(
             HISTORICAL_SNAPSHOTS
                 + """
-                select h.id,h.animal_id,s.identification,s.name,h.treatment_type,h.occurred_on,
+                select h.id,h.animal_id,s.identification,s.name,h.treatment_type,h.procedure_code,h.occurred_on,
                        h.recorded_at,h.product,h.protocol,h.next_due_on
                   from app.animal_health_treatments h left join snapshots s on s.animal_id=h.animal_id
                 """
@@ -380,12 +521,19 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
                     rs.getObject("id", UUID.class),
                     animal(rs, "animal_id", "identification", "name"),
                     HealthTreatmentType.valueOf(rs.getString("treatment_type")),
+                    rs.getString("procedure_code") == null ? null
+                        : HealthProcedureCode.valueOf(rs.getString("procedure_code")),
                     rs.getObject("occurred_on", LocalDate.class),
                     instant(rs, "recorded_at"),
                     rs.getString("product"),
                     rs.getString("protocol"),
                     rs.getObject("next_due_on", LocalDate.class)));
     return new ReportPage<>(new HealthSummary(total, animals, counts), items, total);
+  }
+
+  public ReportPage<HealthSummary, HealthItem> health(TenantId tenant, UUID farm, LocalDate from,
+      LocalDate to, HealthTreatmentType type, UUID animal, int limit, long offset) {
+    return health(tenant, farm, from, to, type, null, animal, limit, offset);
   }
 
   @Override

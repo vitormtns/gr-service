@@ -21,6 +21,84 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
   private static final LocalDate TO = LocalDate.of(2026, 12, 31);
 
   @Test
+  void reconcilesRecordedFarmEventsAcrossPeriodBoundariesAndRls() throws Exception {
+    Fixture fixture = fixture();
+    event(fixture, fixture.activeFemale(), "CREATED", LocalDate.of(2026, 1, 1), null, "{}");
+    event(fixture, fixture.activeMale(), "CREATED", LocalDate.of(2026, 1, 1), null, "{}");
+    event(fixture, fixture.sold(), "CREATED", LocalDate.of(2026, 2, 1), null, "{}");
+    event(fixture, fixture.sold(), "SOLD", LocalDate.of(2026, 2, 2), UUID.randomUUID(), "{}");
+    event(fixture, fixture.deceased(), "BORN", LocalDate.of(2026, 2, 3), UUID.randomUUID(), "{}");
+    event(fixture, fixture.deceased(), "CREATED", LocalDate.of(2026, 2, 3), null, "{}");
+    event(fixture, fixture.deceased(), "DECEASED", LocalDate.of(2026, 2, 4), UUID.randomUUID(), "{}");
+    try (Connection connection = adminConnection()) {
+      EventLedger ledger = repository(connection).eventLedger(tenant(fixture), fixture.farm(),
+          LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28));
+      assertThat(ledger).isEqualTo(new EventLedger(2, 1, 1, 0, 1, 1, 0, 2));
+      assertThat(repository(connection).eventLedger(tenant(fixture), fixture.otherFarm(),
+          LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28)).closingAnimals()).isZero();
+    }
+    Fixture outsider = fixture();
+    try (Connection connection = apiConnection()) {
+      setTenant(connection, outsider.tenant());
+      assertThat(repository(connection).eventLedger(tenant(fixture), fixture.farm(),
+          LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28)).closingAnimals()).isZero();
+      connection.rollback();
+    }
+  }
+
+  @Test
+  void healthReportFiltersStructuredProcedureAndOmitsRetractedFacts() throws Exception {
+    Fixture fixture = fixture();
+    UUID treatment = UUID.randomUUID();
+    executeAsAdmin("insert into app.animal_health_treatments(id,tenant_id,farm_id,animal_id,operation_id,treatment_type,procedure_code,occurred_on) values(?,?,?,?,?,'VACCINATION','FOOT_AND_MOUTH_DISEASE','2026-02-01')",
+        treatment, fixture.tenant(), fixture.farm(), fixture.activeFemale(), UUID.randomUUID());
+    try (Connection connection = adminConnection()) {
+      var report = repository(connection).health(tenant(fixture), fixture.farm(), FROM, TO,
+          HealthTreatmentType.VACCINATION, HealthProcedureCode.FOOT_AND_MOUTH_DISEASE,
+          null, 20, 0);
+      assertThat(report.summary().treatmentsCount()).isOne();
+      assertThat(repository(connection).currentProcedureAgeSexCounts(tenant(fixture), fixture.farm(),
+          HealthProcedureCode.FOOT_AND_MOUTH_DISEASE))
+          .extracting(ProcedureAgeSexCount::withRecordedTreatment)
+          .containsExactlyInAnyOrder(true, false);
+      assertThat(report.items()).singleElement().satisfies(item -> {
+        assertThat(item.procedureCode()).isEqualTo(HealthProcedureCode.FOOT_AND_MOUTH_DISEASE);
+        assertThat(item.nextDueOn()).isNull();
+      });
+    }
+    executeAsAdmin("insert into app.animal_health_treatment_retractions(id,tenant_id,farm_id,animal_id,treatment_id,operation_id) values(?,?,?,?,?,?)",
+        UUID.randomUUID(), fixture.tenant(), fixture.farm(), fixture.activeFemale(), treatment,
+        UUID.randomUUID());
+    try (Connection connection = adminConnection()) {
+      assertThat(repository(connection).health(tenant(fixture), fixture.farm(), FROM, TO,
+          HealthTreatmentType.VACCINATION, HealthProcedureCode.FOOT_AND_MOUTH_DISEASE,
+          null, 20, 0).summary().treatmentsCount()).isZero();
+      assertThat(repository(connection).currentProcedureAgeSexCounts(tenant(fixture), fixture.farm(),
+          HealthProcedureCode.FOOT_AND_MOUTH_DISEASE))
+          .allSatisfy(row -> assertThat(row.withRecordedTreatment()).isFalse());
+    }
+  }
+
+  @Test
+  void groupsCurrentActiveAnimalsBySexAndBirthDateWithinFarmAndTenant() throws Exception {
+    Fixture f = fixture();
+    try (Connection connection = adminConnection()) {
+      JdbcHerdReportRepository reports = repository(connection);
+      assertThat(reports.currentAgeSexCounts(tenant(f), f.farm()))
+          .containsExactlyInAnyOrder(
+              new AgeSexCount(HerdAnimalSex.FEMALE, LocalDate.of(2024, 1, 1), 1),
+              new AgeSexCount(HerdAnimalSex.MALE, LocalDate.of(2024, 1, 1), 1));
+      assertThat(reports.currentAgeSexCounts(tenant(f), f.otherFarm())).isEmpty();
+    }
+    Fixture outsider = fixture();
+    try (Connection connection = apiConnection()) {
+      setTenant(connection, outsider.tenant());
+      assertThat(repository(connection).currentAgeSexCounts(tenant(f), f.farm())).isEmpty();
+      connection.rollback();
+    }
+  }
+
+  @Test
   void derivesAllExplicitReportsWithoutChangingOperationalFacts() throws Exception {
     Fixture f = fixture();
     seedFacts(f);
@@ -43,13 +121,28 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
 
       var lifecycle =
           reports.lifecycle(tenant(f), f.farm(), FROM, TO, null, null, 20, 0);
+      assertThat(reports.historicalAgeSexCounts(tenant(f), f.farm(), LocalDate.of(2026, 1, 15))
+          .stream().mapToLong(AgeSexCount::count).sum()).isEqualTo(4);
+      assertThat(reports.historicalAgeSexCounts(tenant(f), f.farm(), LocalDate.of(2026, 2, 3))
+          .stream().mapToLong(AgeSexCount::count).sum()).isEqualTo(2);
       assertThat(lifecycle.summary().countsByEventType())
           .containsEntry(LifecycleEvent.CREATED, 4L)
           .containsEntry(LifecycleEvent.BORN, 1L)
           .containsEntry(LifecycleEvent.SOLD, 1L)
           .containsEntry(LifecycleEvent.DECEASED, 1L);
       assertThat(lifecycle.summary().totalAffectedAnimals()).isEqualTo(4);
+      assertThat(lifecycle.summary().totalSaleAmount()).isEqualByComparingTo("1200.50");
+      assertThat(lifecycle.summary().averageSaleAmount()).isEqualByComparingTo("1200.50");
+      assertThat(lifecycle.summary().salesWithAmount()).isOne();
+      assertThat(lifecycle.summary().salesByChannel()).containsEntry("AUCTION", 1L);
+      assertThat(lifecycle.summary().deathsByReason()).containsEntry("UNSPECIFIED", 1L);
       assertThat(lifecycle.totalElements()).isEqualTo(7);
+      assertThat(lifecycle.items()).filteredOn(item -> item.event() == LifecycleEvent.SOLD)
+          .singleElement().satisfies(item -> {
+            assertThat(item.saleChannel()).isEqualTo(SaleChannel.AUCTION);
+            assertThat(item.saleBuyer()).isEqualTo("Comprador");
+            assertThat(item.saleAmount()).isEqualByComparingTo("1200.50");
+          });
 
       var movements =
           reports.movements(
@@ -446,7 +539,8 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
           null,
           "{\"identification\":\"" + identification + "\",\"name\":\"Histórico\"}");
     }
-    event(f, f.sold(), "SOLD", LocalDate.of(2026, 2, 1), UUID.randomUUID(), "{\"notes\":\"Venda\"}");
+    event(f, f.sold(), "SOLD", LocalDate.of(2026, 2, 1), UUID.randomUUID(),
+        "{\"notes\":\"Venda\",\"saleChannel\":\"AUCTION\",\"saleBuyer\":\"Comprador\",\"saleAmount\":1200.50}");
     event(
         f,
         f.deceased(),

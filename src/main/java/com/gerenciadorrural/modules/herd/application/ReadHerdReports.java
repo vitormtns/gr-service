@@ -7,7 +7,10 @@ import com.gerenciadorrural.shared.tenancy.TenantTransactionExecutor;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -41,6 +44,104 @@ public class ReadHerdReports {
     this.clock = clock;
     this.defaultRangeDays = defaultRangeDays;
     this.maximumRangeDays = maximumRangeDays;
+  }
+
+  public AgeSexBalance currentAgeSexBalance(TenantContext context, LocalDate referenceDate) {
+    validateRole(context);
+    LocalDate today = LocalDate.now(clock);
+    LocalDate reference = referenceDate == null ? today : referenceDate;
+    if (reference.isAfter(today)) {
+      throw new HerdReportQueryInvalidException();
+    }
+    return transactions.execute(context, () -> balance(reference, "CURRENT_STATE_AGED_AT_REFERENCE",
+        reports.currentAgeSexCounts(context.tenantId(), context.farmId())));
+  }
+
+  public AgeSexBalance historicalAgeSexBalance(TenantContext context, LocalDate asOf) {
+    validateRole(context);
+    if (asOf == null || asOf.isAfter(LocalDate.now(clock)))
+      throw new HerdReportQueryInvalidException();
+    return transactions.execute(context, () -> balance(asOf,
+        "RECORDED_FARM_EVENTS_WITH_CURRENTLY_CORRECTED_PROFILE",
+        reports.historicalAgeSexCounts(context.tenantId(), context.farmId(), asOf)));
+  }
+
+  public ProcedureCoverage currentProcedureCoverage(TenantContext context,
+      HealthProcedureCode procedureCode, LocalDate referenceDate) {
+    validateRole(context);
+    LocalDate reference = referenceDate == null ? LocalDate.now(clock) : referenceDate;
+    if (procedureCode == null || reference.isAfter(LocalDate.now(clock)))
+      throw new HerdReportQueryInvalidException();
+    return transactions.execute(context, () -> {
+      Map<AgeBand, Map<HerdAnimalSex, long[]>> counts = new EnumMap<>(AgeBand.class);
+      for (AgeBand band : AgeBand.values()) {
+        Map<HerdAnimalSex, long[]> bySex = new EnumMap<>(HerdAnimalSex.class);
+        for (HerdAnimalSex sex : HerdAnimalSex.values()) bySex.put(sex, new long[2]);
+        counts.put(band, bySex);
+      }
+      long total = 0, recorded = 0, unknownBirth = 0;
+      for (ProcedureAgeSexCount row : reports.currentProcedureAgeSexCounts(
+          context.tenantId(), context.farmId(), procedureCode)) {
+        total += row.count();
+        if (row.withRecordedTreatment()) recorded += row.count();
+        if (row.birthDate() == null || row.birthDate().isAfter(reference)) {
+          unknownBirth += row.count();
+          continue;
+        }
+        long[] values = counts.get(AgePolicy.classify(row.birthDate(), reference)).get(row.sex());
+        values[row.withRecordedTreatment() ? 0 : 1] += row.count();
+      }
+      List<ProcedureCoverageCell> cells = new ArrayList<>();
+      for (AgeBand band : AgeBand.values())
+        for (HerdAnimalSex sex : HerdAnimalSex.values()) {
+          long[] values = counts.get(band).get(sex);
+          cells.add(new ProcedureCoverageCell(band, sex, values[0], values[1]));
+        }
+      return new ProcedureCoverage(procedureCode, reference,
+          "CURRENT_STATE_AGED_AT_REFERENCE_EFFECTIVE_RECORDED_TREATMENTS",
+          total, recorded, total - recorded, unknownBirth, List.copyOf(cells));
+    });
+  }
+
+  private AgeSexBalance balance(LocalDate reference, String semantics, List<AgeSexCount> rows) {
+      Map<AgeBand, Map<HerdAnimalSex, Long>> counts = new EnumMap<>(AgeBand.class);
+      for (AgeBand band : AgeBand.values()) {
+        Map<HerdAnimalSex, Long> bySex = new EnumMap<>(HerdAnimalSex.class);
+        for (HerdAnimalSex sex : HerdAnimalSex.values()) {
+          bySex.put(sex, 0L);
+        }
+        counts.put(band, bySex);
+      }
+      long total = 0;
+      long unknownBirthDate = 0;
+      for (AgeSexCount row : rows) {
+        total += row.count();
+        if (row.birthDate() == null || row.birthDate().isAfter(reference)) {
+          unknownBirthDate += row.count();
+        } else {
+          Map<HerdAnimalSex, Long> bySex = counts.get(AgePolicy.classify(row.birthDate(), reference));
+          bySex.merge(row.sex(), row.count(), Long::sum);
+        }
+      }
+      List<AgeSexCell> cells = new ArrayList<>();
+      for (AgeBand band : AgeBand.values()) {
+        for (HerdAnimalSex sex : HerdAnimalSex.values()) {
+          cells.add(new AgeSexCell(band, sex, counts.get(band).get(sex)));
+        }
+      }
+      return new AgeSexBalance(reference, semantics, total,
+          unknownBirthDate, List.copyOf(cells));
+  }
+
+  public PeriodReconciliation periodReconciliation(TenantContext context, LocalDate from,
+      LocalDate to) {
+    validateRole(context);
+    if (from == null || to == null || to.isAfter(LocalDate.now(clock)))
+      throw new HerdReportQueryInvalidException();
+    DateRange range = validate(context, from, to, 0, 1);
+    return transactions.execute(context, () -> new PeriodReconciliation(range.from(), range.to(),
+        "RECORDED_FARM_EVENT_LEDGER", reports.eventLedger(context.tenantId(), context.farmId(),
+        range.from(), range.to())));
   }
 
   public Page<HerdPositionSummary, HerdPositionItem> herdPosition(
@@ -174,6 +275,7 @@ public class ReadHerdReports {
       LocalDate from,
       LocalDate to,
       HealthTreatmentType treatmentType,
+      HealthProcedureCode procedureCode,
       UUID animalId,
       int page,
       int size) {
@@ -189,6 +291,7 @@ public class ReadHerdReports {
                 range.from(),
                 range.to(),
                 treatmentType,
+                procedureCode,
                 animalId,
                 size,
                 offset(page, size)));
@@ -283,11 +386,15 @@ public class ReadHerdReports {
   }
 
   private static void validate(TenantContext context, int page, int size) {
-    if (!READ_ROLES.contains(context.role())) {
-      throw new HerdReportForbiddenException();
-    }
+    validateRole(context);
     if (page < 0 || size < 1 || size > 100 || offset(page, size) > Integer.MAX_VALUE) {
       throw new HerdReportQueryInvalidException();
+    }
+  }
+
+  private static void validateRole(TenantContext context) {
+    if (!READ_ROLES.contains(context.role())) {
+      throw new HerdReportForbiddenException();
     }
   }
 
@@ -303,4 +410,19 @@ public class ReadHerdReports {
 
   public record Page<S, I>(
       S summary, List<I> items, int page, int size, long totalElements, int totalPages) {}
+
+  public record AgeSexCell(AgeBand ageBand, HerdAnimalSex sex, long count) {}
+
+  public record AgeSexBalance(LocalDate referenceDate, String positionSemantics,
+      long totalActiveAnimals, long unknownBirthDate, List<AgeSexCell> cells) {}
+
+  public record ProcedureCoverageCell(AgeBand ageBand, HerdAnimalSex sex,
+      long withRecordedTreatment, long withoutRecordedTreatment) {}
+
+  public record ProcedureCoverage(HealthProcedureCode procedureCode, LocalDate referenceDate,
+      String positionSemantics, long totalActiveAnimals, long withRecordedTreatment,
+      long withoutRecordedTreatment, long unknownBirthDate, List<ProcedureCoverageCell> cells) {}
+
+  public record PeriodReconciliation(LocalDate from, LocalDate to, String positionSemantics,
+      EventLedger balance) {}
 }
