@@ -22,3 +22,11 @@ As mutações administrativas e seus eventos obrigatórios compartilham a mesma 
 As provas HTTP com PostgreSQL/Testcontainers cobrem same-token acceptance, accept versus revoke, último OWNER, role versus revoke e scope versus revoke. Toda mutation concorrente usa `expectedVersion`, portanto somente um vencedor em uma versão pode persistir evento e scopes. A autorização é consultada no banco em cada request: revogação, remoção de scope e downgrade de papel têm efeito imediato mesmo com o mesmo JWT.
 
 Erros `DataAccessException` do control plane usam o contrato sanitizado `PLATFORM_PERSISTENCE_UNAVAILABLE`; SQL, trigger, schema, hash e token não são devolvidos ao cliente. O ledger `platform_admin_events` é consumido somente como append-only pelo runtime. As validações rejeitam listas de fazendas repetidas e `farmIds` sem `farmScopeMode`, evitando estados semanticamente ambíguos.
+
+## Correções comprovadas na integração do portal
+
+A criação de organização qualifica as colunas em SQL para evitar conflito com parâmetros de saída da função. A função usa `search_path` vazio e serializa tentativas pelo UUID do cadastro. Repetir o mesmo identificador, nome original e responsável autorizado retorna a organização existente, sem duplicar associação ou evento. Um identificador reutilizado por outro comando ou responsável retorna conflito sanitizado.
+
+A criação de fazenda também serializa por organização e reconhece o comando original pelo evento de criação. O evento registra o identificador da fazenda, permitindo sua consulta no filtro de auditoria. Correções posteriores não alteram esse registro original.
+
+A consulta individual de associação filtra diretamente organização e identificador, sem depender das primeiras cem pessoas. A proteção do último proprietário usa `COUNT` de todas as associações ativas, na mesma transação e sob o bloqueio administrativo existente. Os filtros de convites usam a mesma situação efetiva que a resposta, incluindo expiração derivada da data de validade.

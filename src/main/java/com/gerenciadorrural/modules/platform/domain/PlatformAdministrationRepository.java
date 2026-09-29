@@ -17,6 +17,7 @@ public interface PlatformAdministrationRepository {
     Farm createFarm(UUID actorId, UUID organizationId, UUID id, String name);
     Optional<Farm> updateFarm(UUID actorId, UUID organizationId, UUID farmId, String name, String status, long expectedVersion);
     List<Member> members(UUID actorId, UUID organizationId, int offset, int size);
+    long activeOwnerCount(UUID actorId, UUID organizationId);
     Optional<Member> addMember(UUID actorId, UUID organizationId, UUID userId, String role, String scopeMode, List<UUID> farmIds);
     Optional<Member> member(UUID actorId, UUID organizationId, UUID membershipId);
     Optional<Member> updateMember(UUID actorId, UUID organizationId, UUID membershipId, String role, String scopeMode, List<UUID> farmIds, long expectedVersion);
