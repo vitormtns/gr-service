@@ -86,6 +86,17 @@ class MilkServiceTest {
     verify(records, never()).insert(any(), any(), any(), any(), any(), any(), any(), any(), any());
   }
 
+  @Test
+  void rejectsLitersIntegerOverflowBeforeTransaction() {
+    for (String value : java.util.List.of("1000000", "1000000.0", "1E+6")) {
+      assertThatThrownBy(() -> service.record(context, animalId,
+          new MilkService.Command(UUID.randomUUID(), 0L, LocalDate.of(2026, 9, 26),
+              new BigDecimal(value), null, null)))
+          .isInstanceOf(HerdAnimalCommandInvalidException.class);
+    }
+    verifyNoInteractions(transactions, animals, records);
+  }
+
   private HerdAnimalSummary animal(HerdAnimalSex sex, HerdAnimalStatus status, long version) {
     return new HerdAnimalSummary(animalId, "A-1", "Brisa", sex,
         LocalDate.of(2024, 1, 1), status, version);

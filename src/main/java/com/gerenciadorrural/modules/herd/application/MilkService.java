@@ -41,7 +41,7 @@ public class MilkService {
         || command.recordedOn() == null
         || command.recordedOn().isAfter(LocalDate.now(clock)) || command.liters() == null
         || command.liters().signum() <= 0 || command.liters().scale() > 3
-        || command.liters().precision() > 9) {
+        || command.liters().precision() > 9 || command.liters().precision() - command.liters().scale() > 6) {
       throw new HerdAnimalCommandInvalidException();
     }
     String notes = notes(command.notes());
