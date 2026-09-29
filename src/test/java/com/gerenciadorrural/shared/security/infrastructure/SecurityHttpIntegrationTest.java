@@ -304,6 +304,11 @@ class SecurityHttpIntegrationTest extends SpringPostgresTestSupport {
     void farmProfilePatchDiagnosticFailureReturnsSanitized503() throws Exception {
         UUID userId = UUID.randomUUID();
         TenantContextData data = insertTenantContextData(userId, "Organização", "Fazenda", "ALL_FARMS");
+        try (Connection connection = PostgresTestEnvironment.adminConnection();
+             var membership = connection.prepareStatement("update app.organization_memberships set role_key='OWNER' where id=?")) {
+            membership.setObject(1, data.membershipId());
+            membership.executeUpdate();
+        }
         doThrow(new DataRetrievalFailureException(
                 "select version from app.farms at jdbc:postgresql://diagnostic-host/app password=secret"
         )).when(farmProfileQueryRepository).findCurrent(any(), any());

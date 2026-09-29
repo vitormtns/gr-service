@@ -145,6 +145,37 @@ class FarmProfileVerticalIntegrationTest extends SpringPostgresTestSupport {
     }
 
     @Test
+    void operationalAndReadOnlyRolesCannotRenameTheCurrentFarm() throws Exception {
+        for (String role : List.of("MANAGER", "OPERATOR", "VIEWER")) {
+            setMembershipRole(role);
+            mvc.perform(patchRequest(userA, organizationA, activeFarmA,
+                    "{\"name\":\"Alteração não autorizada\",\"expectedVersion\":0}"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("FARM_PROFILE_FORBIDDEN"));
+            mvc.perform(request(userA, organizationA, activeFarmA)).andExpect(status().isOk());
+            assertFarmName(activeFarmA, "Fazenda A");
+        }
+    }
+
+    @Test
+    void administratorCanRenameTheCurrentFarmWithAnExpectedVersion() throws Exception {
+        setMembershipRole("ADMIN");
+        mvc.perform(patchRequest(userA, organizationA, activeFarmA,
+                "{\"name\":\"Fazenda revisada\",\"expectedVersion\":0}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Fazenda revisada"));
+    }
+
+    private void setMembershipRole(String role) throws Exception {
+        try (Connection connection = PostgresTestEnvironment.adminConnection();
+             var statement = connection.prepareStatement("update app.organization_memberships set role_key=? where id=?")) {
+            statement.setString(1, role);
+            statement.setObject(2, membershipA);
+            statement.executeUpdate();
+        }
+    }
+
+    @Test
     void alternativePathQueryBodyAndJwtClaimsCannotSelectAnotherFarm() throws Exception {
         String token = token(userA, Map.of(
                 "farmId", activeFarmB.toString(),

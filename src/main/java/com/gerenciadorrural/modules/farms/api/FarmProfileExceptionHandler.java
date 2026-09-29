@@ -1,6 +1,7 @@
 package com.gerenciadorrural.modules.farms.api;
 
 import com.gerenciadorrural.modules.farms.application.FarmProfileNotAvailableException;
+import com.gerenciadorrural.modules.farms.application.FarmProfileForbiddenException;
 import com.gerenciadorrural.modules.farms.application.FarmProfileVersionConflictException;
 import com.gerenciadorrural.modules.organizations.application.TenantContextNotAvailableException;
 import com.gerenciadorrural.shared.api.error.ApiErrorResponse;
@@ -25,6 +26,11 @@ import java.util.List;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 @RestControllerAdvice(assignableTypes = FarmProfileController.class)
 class FarmProfileExceptionHandler {
+
+    @ExceptionHandler(FarmProfileForbiddenException.class)
+    ResponseEntity<ApiErrorResponse> forbidden(HttpServletRequest request) {
+        return error(HttpStatus.FORBIDDEN, "FARM_PROFILE_FORBIDDEN", "Você não tem permissão para alterar o perfil da fazenda", request);
+    }
 
     @ExceptionHandler({
             MethodArgumentNotValidException.class,

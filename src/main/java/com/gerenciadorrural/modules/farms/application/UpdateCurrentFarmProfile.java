@@ -26,6 +26,9 @@ public class UpdateCurrentFarmProfile {
         if (normalizedName.isEmpty() || normalizedName.length() > 255) {
             throw new IllegalArgumentException();
         }
+        if (!"OWNER".equals(context.role()) && !"ADMIN".equals(context.role())) {
+            throw new FarmProfileForbiddenException();
+        }
         return transactions.execute(context, () -> mapResult(repository.updateName(
                 context.tenantId(), context.farmId(), normalizedName, expectedVersion
         )));
