@@ -56,6 +56,12 @@ Antes de selecionar um tenant, a API sincroniza o usuário autenticado e configu
 
 Esse contexto de usuário não é `TenantContext` e não substitui a seleção posterior de tenant. Não há header, sessão HTTP ou claim JWT que escolha uma organização nesta fase.
 
+## Diretório administrativo de organizações
+
+`GET /api/v1/me/administrative-organizations` lista somente organizações associadas ao usuário autenticado por um vínculo ativo, inclusive organizações suspensas ou arquivadas. A identidade é validada e sincronizada antes da consulta. A resposta inclui nome, situação, versão, papel e escopo do próprio vínculo, sem dados de outras pessoas.
+
+A função `app.list_current_user_administrative_organizations()` usa contexto transacional de usuário, `SECURITY DEFINER`, `search_path` vazio e execução exclusiva por `app_api`. Ela não recebe identificadores, não configura tenant e não concede autorização de escrita. O bootstrap operacional continua retornando somente organizações ativas; reativação usa o contrato administrativo existente e exige proprietário no servidor.
+
 ## Supabase Auth
 
 A API valida o JWT pelo Spring Security Resource Server e converte o UUID de `sub` em uma identidade de requisição independente do framework. `SynchronizeAuthenticatedUser` persiste essa identidade em `app.users` por JDBC explícito; e-mail válido pode ser atualizado sem apagar valores por ausência, e `display_name` é preservado porque o token atual não possui fonte confiável para esse dado. Sessão e nível de autenticação continuam atributos não persistidos. Roles do token não concedem papéis organizacionais. A próxima etapa resolverá com segurança o tenant e a fazenda ativos; não existe cliente administrativo do Supabase.

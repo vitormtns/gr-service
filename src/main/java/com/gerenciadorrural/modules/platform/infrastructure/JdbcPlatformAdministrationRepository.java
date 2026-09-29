@@ -11,6 +11,7 @@ import java.util.*;
 
 @Repository
 public class JdbcPlatformAdministrationRepository implements PlatformAdministrationRepository {
+ public List<AdministrativeOrganization> administrativeOrganizations(UUID actor){context.configure(actor);return jdbc.query("select id,name,status,version,role_key,farm_scope_mode from app.list_current_user_administrative_organizations()",new MapSqlParameterSource(),(r,n)->new AdministrativeOrganization(r.getObject("id",UUID.class),r.getString("name"),r.getString("status"),r.getLong("version"),r.getString("role_key"),r.getString("farm_scope_mode")));}
  private final NamedParameterJdbcTemplate jdbc; private final TransactionalCurrentUserContext context;
  public JdbcPlatformAdministrationRepository(NamedParameterJdbcTemplate jdbc, TransactionalCurrentUserContext context){this.jdbc=jdbc;this.context=context;}
  private void access(UUID user, UUID organization){context.configure(user); jdbc.queryForObject("select set_config('app.current_tenant_id',:tenant,true)",new MapSqlParameterSource("tenant",organization.toString()),String.class);}

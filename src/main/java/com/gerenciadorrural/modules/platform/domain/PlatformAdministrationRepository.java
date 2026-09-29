@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface PlatformAdministrationRepository {
+    List<AdministrativeOrganization> administrativeOrganizations(UUID actorId);
     void lockOrganizationAdministration(UUID actorId, UUID organizationId);
     Organization createOrganization(UUID actorId, UUID id, String name);
     Optional<Membership> membership(UUID actorId, UUID organizationId);
@@ -28,6 +29,7 @@ public interface PlatformAdministrationRepository {
     List<AuditEvent> audit(UUID actorId, UUID organizationId, String eventType, UUID farmId, int offset, int size);
 
     record Organization(UUID id,String name,String status,long version) {}
+    record AdministrativeOrganization(UUID id,String name,String status,long version,String role,String farmScopeMode) {}
     record Membership(UUID id,UUID userId,String role,String status,String scopeMode,long version) {}
     record Farm(UUID id,UUID organizationId,String name,String status,long version) {}
     record Member(UUID membershipId,UUID userId,String displayName,String email,String role,String status,String scopeMode,List<UUID> farmIds,long version,Instant createdAt) {}

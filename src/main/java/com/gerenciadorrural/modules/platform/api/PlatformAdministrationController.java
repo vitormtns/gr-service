@@ -11,6 +11,7 @@ import java.util.*;
 
 @RestController @RequestMapping("/api/v1")
 public class PlatformAdministrationController {
+ @GetMapping("/me/administrative-organizations") public ResponseEntity<List<AdministrativeOrganization>> administrativeOrganizations(){return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.administrativeOrganizations());}
  private final PlatformAdministrationService service; public PlatformAdministrationController(PlatformAdministrationService service){this.service=service;}
  @PostMapping("/organizations") public ResponseEntity<Organization> create(@Valid @RequestBody OrganizationCreate r){return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(service.createOrganization(r.id(),name(r.name())));}
  @GetMapping("/organizations/{organizationId}") public Organization get(@PathVariable UUID organizationId){return service.organization(organizationId);}

@@ -14,6 +14,7 @@ import java.util.*;
 
 @Service
 public class PlatformAdministrationService {
+ @Transactional public List<PlatformAdministrationRepository.AdministrativeOrganization> administrativeOrganizations(){return repository.administrativeOrganizations(actor());}
  private final PlatformAdministrationRepository repository; private final CurrentUserProvider users; private final SynchronizeAuthenticatedUser sync; private final Clock clock; private final SecureRandom random=new SecureRandom();
  public PlatformAdministrationService(PlatformAdministrationRepository repository,CurrentUserProvider users,SynchronizeAuthenticatedUser sync,Clock clock){this.repository=repository;this.users=users;this.sync=sync;this.clock=clock;}
  private UUID actor(){var u=users.currentUser().orElseThrow(()->new PlatformException("PLATFORM_FORBIDDEN",403,"Identidade autenticada indisponível"));sync.execute(u);return u.userId();}
