@@ -127,7 +127,10 @@ class HerdAnimalControllerContractTest {
             get("/api/v1/herd/animals").queryParam("page", "zero"),
             get("/api/v1/herd/animals").queryParam("size", "fifty"),
             get("/api/v1/herd/animals").queryParam("unexpected", "value"),
-            get("/api/v1/herd/animals").queryParam("search", "A", "B")
+            get("/api/v1/herd/animals").queryParam("search", "A", "B"),
+            get("/api/v1/herd/animals").queryParam("unlocated", "yes"),
+            get("/api/v1/herd/animals").queryParam("unlocated", ""),
+            get("/api/v1/herd/animals").queryParam("unlocated", "true", "false")
         );
 
         for (MockHttpServletRequestBuilder request : invalidRequests) {
@@ -253,6 +256,18 @@ class HerdAnimalControllerContractTest {
             .andExpect(jsonPath("$.items[0].userId").doesNotExist())
             .andExpect(jsonPath("$.items[0].membershipId").doesNotExist())
             .andExpect(jsonPath("$.items[0].token").doesNotExist());
+    }
+
+    @Test
+    void acceptsLocationPresenceFiltersAlongsideTheExistingQuery() throws Exception {
+        List<HerdAnimalQuery> queries = recordQueries();
+        mvc.perform(get("/api/v1/herd/animals").queryParam("status", "ACTIVE").queryParam("unlocated", "true"))
+            .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/herd/animals").queryParam("unlocated", "false").queryParam("page", "2"))
+            .andExpect(status().isOk());
+        assertThat(queries).containsExactly(
+            new HerdAnimalQuery(null, null, HerdAnimalStatus.ACTIVE, 0, 50, true),
+            new HerdAnimalQuery(null, null, null, 2, 50, false));
     }
 
     private List<HerdAnimalQuery> recordQueries() {

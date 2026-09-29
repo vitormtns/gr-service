@@ -8,6 +8,8 @@ Piquetes são tenant/farm scoped, com UUID fornecido pelo cliente, nomes e códi
 
 ## Movimentação
 
+A listagem paginada de animais aceita `unlocated=true` para consultar registros sem piquete e `unlocated=false` para consultar registros com piquete. O filtro é combinado com busca, sexo e situação, e aplicado tanto à página quanto à contagem, preservando os predicados explícitos de tenant e fazenda. Sem esse parâmetro, a consulta mantém o comportamento anterior. Isso permite abrir a população correspondente ao indicador de animais ativos sem piquete, sem filtrar uma página incompleta no navegador.
+
 Uma movimentação é sempre interna à mesma fazenda. Animais `ACTIVE` podem receber a primeira alocação ou mover-se entre piquetes `ACTIVE`; destino igual, status terminal, piquete inativo ou contexto externo conflitam. A atualização de `paddock_id`, incremento de versão e evento `MOVED` ocorrem na mesma transação tenant-aware.
 
 `MOVED` registra snapshots dos nomes de origem/destino e observações normalizadas. A timeline permanece unificada e tipada. Para leitura operacional por piquete, `app.herd_movements` é uma projeção relacional append-only, referenciada pelo evento: evita varredura JSONB e não transforma o módulo em Event Sourcing.
