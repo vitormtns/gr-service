@@ -88,6 +88,25 @@ public class HerdReproductionController {
                 .body(PregnancyItem.from(reads.pregnancy(context, id)));
     }
 
+    @GetMapping("/pregnancies")
+    ResponseEntity<FarmPregnancyPage> farmPregnancies(@ResolvedTenantContext TenantContext context,
+                                                   @RequestParam(required = false) PregnancyStatus status,
+                                                   @RequestParam(required = false) UUID motherId,
+                                                   @RequestParam(required = false) ReproductionServiceType serviceType,
+                                                   @RequestParam(defaultValue = "0") int page,
+                                                   @RequestParam(defaultValue = "20") int size,
+                                                   HttpServletRequest request) {
+        if (!Set.of("status", "motherId", "serviceType", "page", "size")
+                .containsAll(request.getParameterMap().keySet())
+                || request.getParameterMap().values().stream().anyMatch(values -> values.length != 1)) {
+            throw new HerdAnimalQueryException();
+        }
+        var result = reads.farmPregnancies(context, status, motherId, serviceType, page, size);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new FarmPregnancyPage(
+                result.items().stream().map(FarmPregnancyItem::from).toList(), result.page(), result.size(),
+                result.totalElements(), result.totalPages()));
+    }
+
     @GetMapping("/animals/{motherId}/pregnancies")
     ResponseEntity<PregnancyPage> pregnancies(@ResolvedTenantContext TenantContext context,
                                                @PathVariable UUID motherId,
@@ -140,6 +159,20 @@ public class HerdReproductionController {
 
     public record PregnancyPage(List<PregnancyItem> items, int page, int size,
                                 long totalElements, int totalPages) { }
+    public record MotherReference(UUID id, String identification, String name) { }
+    public record FarmPregnancyItem(UUID id, MotherReference mother, ReproductionServiceType serviceType,
+                                    LocalDate serviceOn, String sireReference, LocalDate expectedCalvingOn,
+                                    PregnancyStatus status, LocalDate confirmedOn, LocalDate endedOn,
+                                    PregnancyTerminationReason terminationReason, UUID calfAnimalId, long version) {
+        static FarmPregnancyItem from(HerdReproductionRepository.FarmPregnancy row) {
+            var p = row.pregnancy();
+            return new FarmPregnancyItem(p.id(), new MotherReference(p.motherAnimalId(), row.identification(), row.name()),
+                    p.serviceType(), p.serviceOn(), p.sireReference(), p.expectedCalvingOn(), p.status(),
+                    p.confirmedOn(), p.endedOn(), p.terminationReason(), p.calfAnimalId(), p.version());
+        }
+    }
+    public record FarmPregnancyPage(List<FarmPregnancyItem> items, int page, int size,
+                                    long totalElements, int totalPages) { }
 
     @JsonIgnoreProperties(ignoreUnknown = false)
     @JsonDeserialize(using = ReproductionRequestDeserializers.Breeding.class)

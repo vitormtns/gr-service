@@ -121,6 +121,41 @@ class HerdReproductionSecurityTransferIntegrationTest extends SpringPostgresTest
     }
 
     @Test
+    void farmPregnanciesArePagedFilteredAndScopedToTheSelectedFarm() throws Exception {
+        UUID firstMother = createMother(callerToken, farmA);
+        UUID secondMother = createMother(callerToken, farmA);
+        UUID otherMother = createMother(administratorToken, farmB);
+        UUID first = breed(callerToken, farmA, firstMother, UUID.randomUUID(), 0);
+        UUID second = breed(callerToken, farmA, secondMother, UUID.randomUUID(), 0);
+        breed(administratorToken, farmB, otherMother, UUID.randomUUID(), 0);
+
+        JsonNode page = json.readTree(request(callerToken, farmA,
+                get("/api/v1/herd/pregnancies").param("status", "POSSIBLE")
+                        .param("page", "0").param("size", "1"), null).getResponse().getContentAsString());
+        assertThat(page.path("totalElements").asInt()).isEqualTo(2);
+        assertThat(page.path("totalPages").asInt()).isEqualTo(2);
+        assertThat(page.path("items").size()).isOne();
+        assertThat(List.of(first.toString(), second.toString())).contains(page.path("items").get(0).path("id").asText());
+
+        JsonNode filtered = json.readTree(request(callerToken, farmA,
+                get("/api/v1/herd/pregnancies").param("motherId", firstMother.toString())
+                        .param("serviceType", "INSEMINATION"), null).getResponse().getContentAsString());
+        assertThat(filtered.path("totalElements").asInt()).isOne();
+        assertThat(filtered.path("items").get(0).path("id").asText()).isEqualTo(first.toString());
+        assertThat(filtered.path("items").get(0).path("mother").path("id").asText())
+                .isEqualTo(firstMother.toString());
+        assertThat(filtered.path("items").get(0).path("mother").path("identification").asText())
+                .isNotBlank();
+
+        JsonNode otherFarm = json.readTree(request(administratorToken, farmB,
+                get("/api/v1/herd/pregnancies"), null).getResponse().getContentAsString());
+        assertThat(otherFarm.path("totalElements").asInt()).isOne();
+        assertNotFound(request(callerToken, farmA,
+                get("/api/v1/herd/pregnancies").param("motherId", otherMother.toString()), null),
+                otherMother, first);
+    }
+
+    @Test
     void realExternalPregnancyAndMutationsRemainNonEnumerable() throws Exception {
         UUID mother = createMother(administratorToken, farmB);
         UUID pregnancy = breed(administratorToken, farmB, mother, UUID.randomUUID(), 0);
