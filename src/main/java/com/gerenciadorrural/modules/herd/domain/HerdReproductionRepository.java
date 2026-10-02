@@ -2,6 +2,7 @@ package com.gerenciadorrural.modules.herd.domain;
 import com.gerenciadorrural.shared.tenancy.TenantId; import java.time.LocalDate; import java.util.*;
 public interface HerdReproductionRepository {
  Optional<Pregnancy> find(TenantId tenantId,UUID farmId,UUID id,boolean lock);
+ Optional<Pregnancy> findOpenForMother(TenantId tenantId,UUID farmId,UUID motherId);
  Optional<Pregnancy> findByOperation(TenantId tenantId,UUID farmId,UUID operationId);
  Pregnancy insert(Pregnancy pregnancy);
  Optional<Pregnancy> transition(TenantId tenantId,UUID farmId,UUID id,long expectedVersion,PregnancyStatus status,LocalDate date,PregnancyTerminationReason reason,UUID calfId);
