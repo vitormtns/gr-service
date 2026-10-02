@@ -15,7 +15,7 @@ Esta matriz compara a intenção funcional do código em `../bovnex2` com o back
 | Vacinação, vermifugação, produto e próxima aplicação | `lib/models/event.dart`, `lib/services/planner_service.dart` | Tratamentos, pendências, agenda e relatórios | SUPERSEDED | O backend registra `nextDueOn` e não impõe intervalo legal legado. |
 | Brucelose | `lib/features/reports/gedave_report_screen.dart` | Código estruturado, política etária e fatos efetivos | SUPERSEDED | A simples presença de texto no legado não prova cumprimento sanitário. |
 | Aftosa | `lib/features/reports/reports_screen.dart`, `lib/features/alerts/sanitary_alerts.dart` | Código histórico `FOOT_AND_MOUTH_DISEASE` em tratamentos e eventos | SUPERSEDED | Registro histórico estruturado sem vencimento automático. O alerta de 365 dias do legado é `OBSOLETE/UNSAFE`: o MAPA informa reconhecimento nacional como livre de aftosa sem vacinação. Uma `nextDueOn` explícita continua sendo manejo programado, sem inferência legal. |
-| Inseminação, cobertura e previsão de parto | `lib/features/herd/herd_add_event_wizard.dart`, `lib/services/planner_service.dart` | Gestação com duração configurável e previsão registrada | SUPERSEDED | O valor padrão de 283 dias pode ser sobrescrito; revisar por espécie/raça quando o produto modelar esses dados. |
+| Inseminação, cobertura e previsão de parto | `lib/features/herd/herd_add_event_wizard.dart`, `lib/services/planner_service.dart` | `ReproductionPolicy` deriva 283 dias e persiste a previsão | FULL | Novos comandos aceitam o campo legado somente quando coincide com a data derivada; replays antigos idênticos preservam a previsão original. Novos clientes o omitem; gestações históricas mantêm a data registrada. Ver [matriz de comportamentos](bovnex-smart-behavior-parity.md). |
 | Inseminação em massa | `lib/features/herd/herd_screen.dart`, `lib/app_state.dart` (`addEventsBulk`) | `POST /api/v1/herd/breedings/batch` | SUPERSEDED | O lote valida versão de cada mãe, é transacional e registra recibo idempotente por fazenda. Qualquer mãe inválida reverte gestações e eventos de todas. |
 | Alertas de parto e conclusão de gestação | `lib/features/herd/services/reproduction_alerts.dart` | Pendências, agenda e estados de gestação | SUPERSEDED | Não repetir alerta após parto/encerramento real. |
 | Pesagens e evolução | `lib/models/event.dart`, `lib/services/planner_service.dart` | Pesagens, pendências, relatórios e dashboard | FULL | A agenda é manejo, não obrigação legal. |
@@ -65,7 +65,7 @@ Esta matriz compara a intenção funcional do código em `../bovnex2` com o back
 
 ## Contrato de reprodução em lote
 
-- `POST /api/v1/herd/breedings/batch` recebe `operationId`, `serviceType`, `serviceOn`, `sireReference?`, `expectedCalvingOn?`, `notes?` e `mothers: [{id,expectedVersion}]` com 1 a 100 mães distintas.
+- `POST /api/v1/herd/breedings/batch` recebe `operationId`, `serviceType`, `serviceOn`, `sireReference?`, `notes?` e `mothers: [{id,expectedVersion}]` com 1 a 100 mães distintas. `expectedCalvingOn?` permanece opcional para clientes antigos, mas em comandos novos só é válido se for `serviceOn + 283 dias`; o backend deriva a data para cada matriz. Replays idênticos de lotes antigos permanecem válidos.
 - O backend aplica a mesma validação e política de duração do comando unitário, ordena IDs para evitar dependência da ordem enviada e preserva um recibo de replay. Reuso divergente de `operationId` retorna conflito. O lote inteiro reverte em caso de mãe inválida, versão desatualizada ou falha de persistência.
 
 ## Contrato de grupos de manejo

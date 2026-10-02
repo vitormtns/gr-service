@@ -71,7 +71,7 @@ class HerdAnimalImportIntegrationTest extends PostgresMigrationTestSupport {
         var reproduction = new ManageHerdReproduction(transactions,
                 new JdbcHerdAnimalProfileRepository(named), new JdbcHerdReproductionRepository(named),
                 new JdbcHerdAnimalWriteRepository(named), new JdbcMaternalRelationRepository(named),
-                events, new ObjectMapper().findAndRegisterModules(), Clock.systemUTC(), 283);
+                events, new ObjectMapper().findAndRegisterModules(), Clock.systemUTC());
         breedingRepository = new JdbcHerdBreedingBatchRepository(named);
         breedingBatches = new BatchBreedCurrentFarmAnimals(transactions, reproduction, breedingRepository);
         notes = new RecordCurrentFarmAnimalNote(transactions, new JdbcHerdAnimalProfileRepository(named),
@@ -227,6 +227,21 @@ class HerdAnimalImportIntegrationTest extends PostgresMigrationTestSupport {
                 LocalDate.of(2026, 1, 1), "Sêmen A", null, null, mothers))
                 .isEqualTo(new BatchBreedCurrentFarmAnimals.Result(result.items(), true));
         assertThat(count("app.animal_pregnancies")).isEqualTo(2);
+        try (Connection connection = adminConnection();
+             var statement = connection.createStatement();
+             ResultSet dates = statement.executeQuery(
+                     "select expected_calving_on from app.animal_pregnancies order by mother_animal_id")) {
+            assertThat(dates.next()).isTrue();
+            assertThat(dates.getDate(1).toLocalDate()).isEqualTo(LocalDate.of(2026, 10, 11));
+            assertThat(dates.next()).isTrue();
+            assertThat(dates.getDate(1).toLocalDate()).isEqualTo(LocalDate.of(2026, 10, 11));
+            assertThat(dates.next()).isFalse();
+        }
+        assertThat(count("app.herd_breeding_batches")).isOne();
+        assertThatThrownBy(() -> breedingBatches.execute(context, UUID.randomUUID(),
+                ReproductionServiceType.INSEMINATION, LocalDate.of(2026, 1, 1), null,
+                LocalDate.of(2026, 10, 12), null, mothers))
+                .isInstanceOf(HerdAnimalCommandInvalidException.class);
         assertThat(count("app.herd_breeding_batches")).isOne();
         UUID otherTenant = UUID.randomUUID();
         UUID otherFarm = UUID.randomUUID();

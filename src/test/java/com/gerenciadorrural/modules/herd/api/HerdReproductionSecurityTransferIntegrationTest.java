@@ -268,6 +268,8 @@ class HerdReproductionSecurityTransferIntegrationTest extends SpringPostgresTest
         MvcResult first = request(callerToken, farmA,
                 post("/api/v1/herd/animals/{id}/breedings", mother), original);
         assertStatus(first, 201);
+        assertThat(json.readTree(first.getResponse().getContentAsString())
+                .path("expectedCalvingOn").asText()).isEqualTo(expectedCalving.toString());
         UUID pregnancy = UUID.fromString(json.readTree(first.getResponse().getContentAsString()).path("id").asText());
         MvcResult replay = request(callerToken, farmA,
                 post("/api/v1/herd/animals/{id}/breedings", mother), normalizedReplay);
@@ -284,6 +286,19 @@ class HerdReproductionSecurityTransferIntegrationTest extends SpringPostgresTest
                 .isEqualTo("HERD_OPERATION_IDEMPOTENCY_CONFLICT");
         assertThat(animalVersion(otherMother)).isZero();
         assertThat(count("select count(*) from app.animal_pregnancies where mother_animal_id=?", otherMother)).isZero();
+    }
+
+    @Test
+    void mismatchedClientPredictionIsRejectedBeforePersisting() throws Exception {
+        UUID mother = createMother(callerToken, farmA);
+        String body = """
+                {"operationId":"%s","expectedVersion":0,"serviceType":"INSEMINATION",\
+                "serviceOn":"%s","expectedCalvingOn":"%s"}
+                """.formatted(UUID.randomUUID(), SERVICE_ON, SERVICE_ON.plusDays(284));
+        MvcResult result = request(callerToken, farmA,
+                post("/api/v1/herd/animals/{id}/breedings", mother), body);
+        assertStatus(result, 400);
+        assertThat(count("select count(*) from app.animal_pregnancies where mother_animal_id=?", mother)).isZero();
     }
 
     @Test

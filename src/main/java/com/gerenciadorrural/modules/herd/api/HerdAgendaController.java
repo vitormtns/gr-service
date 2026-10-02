@@ -27,15 +27,16 @@ public class HerdAgendaController {
       @RequestParam(required = false) UUID animalId,
       @RequestParam(required = false) LocalDate from,
       @RequestParam(required = false) LocalDate to,
+      @RequestParam(defaultValue = "false") boolean includeOverdue,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size,
       HttpServletRequest r) {
-    if (!Set.of("source", "type", "animalId", "from", "to", "page", "size")
+    if (!Set.of("source", "type", "animalId", "from", "to", "includeOverdue", "page", "size")
             .containsAll(r.getParameterMap().keySet())
         || r.getParameterMap().values().stream().anyMatch(x -> x.length != 1))
       throw new HerdAnimalQueryException();
     return ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
-        .body(agenda.page(c, source, type, animalId, from, to, page, size));
+        .body(agenda.page(c, source, type, animalId, from, to, page, size, includeOverdue));
   }
 }

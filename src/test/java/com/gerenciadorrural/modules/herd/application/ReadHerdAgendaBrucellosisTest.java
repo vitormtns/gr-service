@@ -68,6 +68,30 @@ class ReadHerdAgendaBrucellosisTest {
     }
 
     @Test
+    void todayIncludingOverdueKeepsMissedBrucellosisAndUsesSameUnboundedLowerFilterForPageAndCount() {
+        stubLegacy(List.of(), 0);
+        stubCandidates(candidate(today.minusMonths(10)));
+        var result = service.page(c, null, null, null, today, today, 0, 20, true);
+        assertThat(result.items()).singleElement().satisfies(item -> {
+            assertThat(item.pendingWorkType()).isEqualTo(PendingWorkType.BRUCELLOSIS_WINDOW_MISSED);
+            assertThat(item.operationalDate()).isBefore(today);
+            assertThat(item.displayOn()).isEqualTo(today);
+        });
+        verify(agenda).count(tenant, farm, today, 90, 14, null, null, null, null, today);
+        verify(agenda).page(tenant, farm, today, 90, 14, null, null, null, null, today, 0, 0L);
+        assertThat(service.page(c, null, null, null, today, today, 0, 20).items()).isEmpty();
+    }
+
+    @Test
+    void overdueExpansionCannotBeAppliedToPastOrUnboundedRange() {
+        assertThatThrownBy(() -> service.page(c, null, null, null, today.minusDays(1), today, 0, 20, true))
+                .isInstanceOf(HerdPlannerExceptions.QueryInvalid.class);
+        assertThatThrownBy(() -> service.page(c, null, null, null, today, null, 0, 20, true))
+                .isInstanceOf(HerdPlannerExceptions.QueryInvalid.class);
+        verifyNoInteractions(agenda, herd);
+    }
+
+    @Test
     void dueInsideFutureRangeProducesDerivedVaccinationItem() {
         stubLegacy(List.of(), 0);
         stubCandidates(candidate(LocalDate.of(2026, 1, 15)));

@@ -3,6 +3,7 @@ package com.gerenciadorrural.modules.herd.application;
 import com.gerenciadorrural.modules.herd.domain.HerdBreedingBatchRepository;
 import com.gerenciadorrural.modules.herd.domain.HerdBreedingBatchRepository.Receipt;
 import com.gerenciadorrural.modules.herd.domain.ReproductionServiceType;
+import com.gerenciadorrural.modules.herd.domain.ReproductionPolicy;
 import com.gerenciadorrural.shared.tenancy.TenantContext;
 import com.gerenciadorrural.shared.tenancy.TenantTransactionExecutor;
 import java.io.ByteArrayOutputStream;
@@ -46,7 +47,6 @@ public class BatchBreedCurrentFarmAnimals {
         Objects.requireNonNull(context);
         if (!WRITE.contains(context.role())) throw new HerdMovementForbiddenException();
         if (operationId == null || serviceType == null || serviceOn == null
-                || (expectedCalvingOn != null && !expectedCalvingOn.isAfter(serviceOn))
                 || input == null || input.isEmpty() || input.size() > 100)
             throw new HerdAnimalCommandInvalidException();
         String sire = normalize(sireReference, 160);
@@ -66,6 +66,9 @@ public class BatchBreedCurrentFarmAnimals {
                     throw new HerdOperationIdempotencyConflictException();
                 return result(previous.get(), true);
             }
+            if (expectedCalvingOn != null
+                    && !expectedCalvingOn.equals(ReproductionPolicy.expectedCalvingOn(serviceOn)))
+                throw new HerdAnimalCommandInvalidException();
             List<UUID> motherIds = new ArrayList<>();
             List<UUID> pregnancyIds = new ArrayList<>();
             for (Mother mother : mothers) {

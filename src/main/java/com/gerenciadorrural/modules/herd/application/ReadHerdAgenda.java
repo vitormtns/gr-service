@@ -58,6 +58,18 @@ public class ReadHerdAgenda {
       LocalDate to,
       int page,
       int size) {
+    return page(context, source, type, animalId, from, to, page, size, false);
+  }
+
+  public Result page(
+      TenantContext context, HerdAgendaSource source, HerdPlannerType type, UUID animalId,
+      LocalDate from, LocalDate to, int page, int size, boolean includeOverdue) {
+    LocalDate referenceDate = LocalDate.now(clock);
+    if (includeOverdue && (from == null || !from.equals(referenceDate)
+        || to == null || to.isBefore(referenceDate))) {
+      throw new HerdPlannerExceptions.QueryInvalid();
+    }
+    LocalDate effectiveFrom = includeOverdue ? null : from;
     if (!READ_ROLES.contains(context.role())) {
       throw new HerdPlannerExceptions.Forbidden();
     }
@@ -72,9 +84,8 @@ public class ReadHerdAgenda {
     return transactions.execute(
         context,
         () -> {
-          LocalDate referenceDate = LocalDate.now(clock);
           if (isBrucellosisEligible(source, type)) {
-            return merged(context, source, type, animalId, from, to, page, size, referenceDate);
+            return merged(context, source, type, animalId, effectiveFrom, to, page, size, referenceDate);
           }
           var rows =
               repository.page(
@@ -86,7 +97,7 @@ public class ReadHerdAgenda {
                   source,
                   type,
                   animalId,
-                  from,
+                  effectiveFrom,
                   to,
                   size,
                   (long) page * size);
@@ -100,10 +111,10 @@ public class ReadHerdAgenda {
                   source,
                   type,
                   animalId,
-                  from,
+                  effectiveFrom,
                   to);
           return new Result(
-              rows.stream().map(Item::from).toList(), page, size, total, pages(total, size));
+              rows.stream().map(row -> Item.from(row, referenceDate)).toList(), page, size, total, pages(total, size));
         });
   }
 
@@ -161,7 +172,7 @@ public class ReadHerdAgenda {
     all.addAll(brucellosis);
     all.sort(GLOBAL_ORDER);
     List<Item> items = all.subList((int) offset, (int) Math.min(offset + size, all.size())).stream()
-        .map(Item::from)
+        .map(row -> Item.from(row, referenceDate))
         .toList();
     return new Result(items, page, size, globalTotal, pages(globalTotal, size));
   }
@@ -221,6 +232,7 @@ public class ReadHerdAgenda {
       HerdAgendaSource source,
       String kind,
       LocalDate operationalDate,
+      LocalDate displayOn,
       String stableId,
       UUID animalId,
       String summary,
@@ -230,11 +242,12 @@ public class ReadHerdAgenda {
       PendingWorkType pendingWorkType,
       UUID pregnancyId,
       HerdPlannerStatus status) {
-    static Item from(HerdAgendaRepository.Row row) {
+    static Item from(HerdAgendaRepository.Row row, LocalDate referenceDate) {
       return new Item(
           row.source(),
           row.kind(),
           row.operationalDate(),
+          row.operationalDate().isBefore(referenceDate) ? referenceDate : row.operationalDate(),
           row.stableId(),
           row.animalId(),
           row.summary(),

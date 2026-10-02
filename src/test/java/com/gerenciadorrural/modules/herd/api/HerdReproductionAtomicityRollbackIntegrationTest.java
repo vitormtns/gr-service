@@ -191,6 +191,37 @@ class HerdReproductionAtomicityRollbackIntegrationTest extends SpringPostgresTes
     }
 
     @Test
+    void calvingRejectsFutureDateBeforeCreatingCalfOrClosingPregnancy() throws Exception {
+        UUID mother = createMother();
+        UUID pregnancy = breed(mother);
+        UUID calf = UUID.randomUUID();
+        UUID operation = UUID.randomUUID();
+        String body = calvingBody(operation, 1, pregnancy, 0L, calf)
+                .replace(OCCURRED_ON.toString(), LocalDate.now().plusDays(2).toString());
+        assertThat(request(post("/api/v1/herd/animals/{id}/calvings", mother), body)
+                .getResponse().getStatus()).isEqualTo(400);
+        assertCalvingRolledBack(mother, pregnancy, calf, operation, 1);
+    }
+
+    @Test
+    void calvingCannotOmitOpenPregnancyAndLeavesNoPartialFacts() throws Exception {
+        UUID mother = createMother();
+        UUID pregnancy = breed(mother);
+        UUID calf = UUID.randomUUID();
+        UUID operation = UUID.randomUUID();
+        assertThat(request(post("/api/v1/herd/animals/{id}/calvings", mother),
+                calvingBody(operation, 1, null, null, calf)).getResponse().getStatus()).isEqualTo(409);
+        assertCalvingRolledBack(mother, pregnancy, calf, operation, 1);
+        String corrected = calvingBody(operation, 1, pregnancy, 0L, calf);
+        assertThat(request(post("/api/v1/herd/animals/{id}/calvings", mother), corrected)
+                .getResponse().getStatus()).isEqualTo(201);
+        assertSuccessfulCalving(mother, pregnancy, calf, operation, 2);
+        assertThat(request(post("/api/v1/herd/animals/{id}/calvings", mother), corrected)
+                .getResponse().getStatus()).isEqualTo(201);
+        assertSuccessfulCalving(mother, pregnancy, calf, operation, 2);
+    }
+
+    @Test
     void calvingWithoutPregnancyRollbackRemovesEveryPartialWriteAndAllowsRetry() throws Exception {
         UUID mother = createMother();
         UUID calf = UUID.randomUUID();
