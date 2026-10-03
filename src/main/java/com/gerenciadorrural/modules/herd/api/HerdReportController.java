@@ -31,6 +31,35 @@ public class HerdReportController {
     return ok(reports.currentAgeSexBalance(context, referenceDate));
   }
 
+  @GetMapping("/age-sex-period")
+  ResponseEntity<?> ageSexPeriod(@ResolvedTenantContext TenantContext context,
+      @RequestParam LocalDate from,@RequestParam LocalDate to,HttpServletRequest request) {
+    parameters(request,"from","to");
+    return ok(reports.ageSexPeriod(context,from,to));
+  }
+
+  @GetMapping("/current-age-sex-animals")
+  ResponseEntity<?> currentAgeSexAnimals(@ResolvedTenantContext TenantContext context,
+      @RequestParam(required=false) LocalDate referenceDate,
+      @RequestParam(required=false) AgeBand ageBand,@RequestParam(required=false) HerdAnimalSex sex,
+      @RequestParam(defaultValue="false") boolean unknownBirthDate,
+      @RequestParam(defaultValue="0") int page,@RequestParam(defaultValue="20") int size,
+      HttpServletRequest request) {
+    parameters(request,"referenceDate","ageBand","sex","unknownBirthDate","page","size");
+    return ok(reports.ageSexAnimals(context,referenceDate,false,ageBand,sex,unknownBirthDate,page,size));
+  }
+
+  @GetMapping("/historical-age-sex-animals")
+  ResponseEntity<?> historicalAgeSexAnimals(@ResolvedTenantContext TenantContext context,
+      @RequestParam LocalDate asOf,@RequestParam(required=false) AgeBand ageBand,
+      @RequestParam(required=false) HerdAnimalSex sex,
+      @RequestParam(defaultValue="false") boolean unknownBirthDate,
+      @RequestParam(defaultValue="0") int page,@RequestParam(defaultValue="20") int size,
+      HttpServletRequest request) {
+    parameters(request,"asOf","ageBand","sex","unknownBirthDate","page","size");
+    return ok(reports.ageSexAnimals(context,asOf,true,ageBand,sex,unknownBirthDate,page,size));
+  }
+
   @GetMapping("/period-reconciliation")
   ResponseEntity<?> periodReconciliation(@ResolvedTenantContext TenantContext context,
       @RequestParam LocalDate from, @RequestParam LocalDate to, HttpServletRequest request) {

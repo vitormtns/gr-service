@@ -144,6 +144,83 @@ public class ReadHerdReports {
         range.from(), range.to())));
   }
 
+  public AgeSexPeriod ageSexPeriod(TenantContext context, LocalDate from, LocalDate to) {
+    if (from == null || to == null || to.isAfter(LocalDate.now(clock)))
+      throw new HerdReportQueryInvalidException();
+    DateRange range = validate(context,from,to,0,1);
+    return transactions.execute(context,()-> {
+      Map<String,long[]> values = new java.util.LinkedHashMap<>();
+      for (AgeBand band : AgeBand.values()) for (HerdAnimalSex sex : HerdAnimalSex.values())
+        values.put(cellKey(band,sex),new long[8]);
+      for (HerdAnimalSex sex : HerdAnimalSex.values()) values.put(cellKey(null,sex),new long[8]);
+      LocalDate openingOn = range.from().minusDays(1);
+      for (AgeSexCount row : reports.historicalAgeSexCounts(context.tenantId(),context.farmId(),openingOn))
+        values.get(cellKey(bandAt(row.birthDate(),openingOn),row.sex()))[0] += row.count();
+      for (AgeSexCount row : reports.historicalAgeSexCounts(context.tenantId(),context.farmId(),range.to()))
+        values.get(cellKey(bandAt(row.birthDate(),range.to()),row.sex()))[7] += row.count();
+      for (AgeSexFlow row : reports.ageSexFlows(context.tenantId(),context.farmId(),range.from(),range.to())) {
+        int index = switch(row.eventType()) {
+          case CREATED -> 1; case BORN -> 2; case TRANSFERRED_IN -> 3;
+          case SOLD -> 4; case DECEASED -> 5; case TRANSFERRED_OUT -> 6;
+          default -> throw new IllegalStateException("Tipo de fluxo inválido");
+        };
+        values.get(cellKey(bandAt(row.birthDate(),row.occurredOn()),row.sex()))[index] += row.count();
+      }
+      List<AgeSexPeriodCell> cells = new ArrayList<>();
+      long[] totals = new long[8];
+      for (AgeBand band : AgeBand.values()) for (HerdAnimalSex sex : HerdAnimalSex.values())
+        cells.add(periodCell(band,sex,values.get(cellKey(band,sex)),totals));
+      for (HerdAnimalSex sex : HerdAnimalSex.values())
+        cells.add(periodCell(null,sex,values.get(cellKey(null,sex)),totals));
+      return new AgeSexPeriod(from,to,openingOn,
+          "RECORDED_FARM_EVENTS_WITH_CURRENTLY_CORRECTED_PROFILE_AGE_AT_EVENT",
+          List.copyOf(cells),periodCell(null,null,totals,new long[8]));
+    });
+  }
+
+  public AgeSexAnimalPage ageSexAnimals(TenantContext context, LocalDate reference,
+      boolean historical, AgeBand band, HerdAnimalSex sex, boolean unknownBirthDate,
+      int page, int size) {
+    validate(context,page,size);
+    LocalDate date = reference == null && !historical ? LocalDate.now(clock) : reference;
+    if (date == null || date.isAfter(LocalDate.now(clock)) || unknownBirthDate && band != null)
+      throw new HerdReportQueryInvalidException();
+    int lower = band == null ? 0 : switch(band) {
+      case MONTHS_0_2 -> 0; case MONTHS_3_8 -> 3; case MONTHS_9_12 -> 9;
+      case MONTHS_13_24 -> 13; case MONTHS_25_36 -> 25; case MONTHS_37_PLUS -> 37;
+    };
+    Integer upper = band == null ? null : switch(band) {
+      case MONTHS_0_2 -> 3; case MONTHS_3_8 -> 9; case MONTHS_9_12 -> 13;
+      case MONTHS_13_24 -> 25; case MONTHS_25_36 -> 37; case MONTHS_37_PLUS -> null;
+    };
+    return transactions.execute(context,()-> {
+      var result = reports.ageSexAnimals(context.tenantId(),context.farmId(),date,historical,sex,
+          upper == null ? null : date.minusMonths(upper),date.minusMonths(lower),unknownBirthDate,
+          size,offset(page,size));
+      return new AgeSexAnimalPage(date,historical
+          ? "RECORDED_FARM_EVENTS_WITH_CURRENTLY_CORRECTED_PROFILE" : "CURRENT_STATE_AGED_AT_REFERENCE",
+          result.items(),page,size,result.totalElements(),pages(result.totalElements(),size));
+    });
+  }
+
+  private static AgeBand bandAt(LocalDate birth, LocalDate date) {
+    return birth == null || birth.isAfter(date) ? null : AgePolicy.classify(birth,date);
+  }
+  private static String cellKey(AgeBand band,HerdAnimalSex sex) { return band+":"+sex; }
+  private static AgeSexPeriodCell periodCell(AgeBand band,HerdAnimalSex sex,long[] v,long[] totals) {
+    for(int i=0;i<v.length;i++) totals[i]+=v[i];
+    return new AgeSexPeriodCell(band,sex,v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],
+        v[7]-(v[0]+v[1]+v[2]+v[3]-v[4]-v[5]-v[6]));
+  }
+
+  public record AgeSexPeriodCell(AgeBand ageBand,HerdAnimalSex sex,long openingAnimals,
+      long registeredAnimals,long births,long transfersIn,long sales,long deaths,long transfersOut,
+      long closingAnimals,long ageBandChange) {}
+  public record AgeSexPeriod(LocalDate from,LocalDate to,LocalDate openingOn,String positionSemantics,
+      List<AgeSexPeriodCell> cells,AgeSexPeriodCell totals) {}
+  public record AgeSexAnimalPage(LocalDate referenceDate,String positionSemantics,
+      List<AgeSexAnimal> items,int page,int size,long totalElements,int totalPages) {}
+
   public Page<HerdPositionSummary, HerdPositionItem> herdPosition(
       TenantContext context,
       HerdReportCategory category,

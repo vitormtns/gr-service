@@ -123,6 +123,36 @@ public class ReadHerdAgenda {
         && (type == null || type == HerdPlannerType.VACCINATION);
   }
 
+  public DailySummary dailySummary(TenantContext context,HerdAgendaSource source,HerdPlannerType type,
+      UUID animalId,LocalDate from,LocalDate to,boolean includeOverdue) {
+    LocalDate reference=LocalDate.now(clock);
+    if(!READ_ROLES.contains(context.role()))throw new HerdPlannerExceptions.Forbidden();
+    if(from==null||to==null||from.isAfter(to)
+        ||java.time.temporal.ChronoUnit.DAYS.between(from,to)>365
+        ||includeOverdue&&!from.equals(reference))throw new HerdPlannerExceptions.QueryInvalid();
+    return transactions.execute(context,()->{
+      java.util.Map<LocalDate,long[]> grouped=new java.util.TreeMap<>();
+      for(var row:repository.dailyCounts(context.tenantId(),context.farmId(),reference,
+          weighingDueDays,calvingUpcomingDays,source,type,animalId,includeOverdue?null:from,to))
+        addDaily(grouped,row.operationalDate(),row.count(),reference,includeOverdue);
+      if(isBrucellosisEligible(source,type))for(var row:brucellosisRows(context,animalId,
+          includeOverdue?null:from,to,reference))
+        addDaily(grouped,row.operationalDate(),1,reference,includeOverdue);
+      var days=grouped.entrySet().stream().map(e->new DaySummary(e.getKey(),e.getValue()[0],
+          e.getValue()[1]==2?"DANGER":e.getValue()[1]==1?"WARNING":"INFO")).toList();
+      return new DailySummary(reference,from,to,days.stream().mapToLong(DaySummary::count).sum(),days);
+    });
+  }
+  private static void addDaily(java.util.Map<LocalDate,long[]> grouped,LocalDate date,long count,
+      LocalDate reference,boolean includeOverdue){
+    int rank=date.isBefore(reference)?2:date.equals(reference)?1:0;
+    LocalDate display=includeOverdue&&date.isBefore(reference)?reference:date;
+    long[] v=grouped.computeIfAbsent(display,k->new long[2]);v[0]+=count;v[1]=Math.max(v[1],rank);
+  }
+  public record DaySummary(LocalDate displayOn,long count,String maxLevel){}
+  public record DailySummary(LocalDate referenceDate,LocalDate from,LocalDate to,long totalElements,
+      List<DaySummary> days){}
+
   private Result merged(
       TenantContext context,
       HerdAgendaSource source,

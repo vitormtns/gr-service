@@ -6,6 +6,21 @@ import java.util.Optional;
 
 public final class AgePolicy {
 
+    public static java.util.List<Integer> transitionBoundaries() {
+        return java.util.List.of(3, 9, 13, 25, 37);
+    }
+
+    public static int minimumMonths(AgeBand band) {
+        return switch (band) {
+            case MONTHS_0_2 -> 0;
+            case MONTHS_3_8 -> 3;
+            case MONTHS_9_12 -> 9;
+            case MONTHS_13_24 -> 13;
+            case MONTHS_25_36 -> 25;
+            case MONTHS_37_PLUS -> 37;
+        };
+    }
+
     private AgePolicy() {
     }
 

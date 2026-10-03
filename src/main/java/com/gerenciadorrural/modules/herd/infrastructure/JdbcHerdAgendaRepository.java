@@ -41,7 +41,8 @@ public class JdbcHerdAgendaRepository implements HerdAgendaRepository {
   }
 
   private static final String SQL =
-      JdbcHerdManagementRepository.PENDING_SQL
+      JdbcHerdManagementRepository.PENDING_SQL.replace("where lh.next_due_on<=:reference",
+          "where lh.next_due_on is not null")
           + """
 , manual_items as (
     select 'MANUAL' source,type kind,scheduled_for operational_date,id::text stable_id,animal_id,title summary,
@@ -56,12 +57,14 @@ derived_items as (
                      when 'WEIGHING_DUE' then 'WEIGHING' else 'CALVING' end kind,
            due_on operational_date,coalesce(pregnancy_id::text,animal_id::text||':'||type) stable_id,
            animal_id,
-           case type when 'VACCINATION_DUE' then 'Vacinação pendente'
-                     when 'DEWORMING_DUE' then 'Vermifugação pendente'
+           case type when 'VACCINATION_DUE' then case when due_on>:reference then 'Vacinação prevista' else 'Vacinação pendente' end
+                     when 'DEWORMING_DUE' then case when due_on>:reference then 'Vermifugação prevista' else 'Vermifugação pendente' end
                      when 'WEIGHING_DUE' then 'Pesagem pendente'
                      when 'CALVING_UPCOMING' then 'Parto próximo'
                      else 'Parto atrasado' end summary,
-           identification,name,null::uuid planner_item_id,type pending_type,pregnancy_id,null::text status
+           identification,name,null::uuid planner_item_id,
+           case when type in ('VACCINATION_DUE','DEWORMING_DUE') and due_on>:reference then null else type end pending_type,
+           pregnancy_id,null::text status
       from items
   ),
 agenda as (select * from manual_items union all select * from derived_items)
@@ -87,6 +90,16 @@ select * from agenda where (cast(:source as text) is null or source=:source) and
             r.getString("status") == null
                 ? null
                 : HerdPlannerStatus.valueOf(r.getString("status")));
+  }
+
+  @Override
+  public List<DailyCount> dailyCounts(TenantId tenant,UUID farm,LocalDate reference,
+      int weighingDays,int upcomingDays,HerdAgendaSource source,HerdPlannerType type,UUID animal,
+      LocalDate from,LocalDate to) {
+    return j.query("select operational_date,count(*) total from ("+SQL
+        +") x group by operational_date order by operational_date",
+        p(tenant,farm,reference,weighingDays,upcomingDays,source,type,animal,from,to),
+        (rs,n)->new DailyCount(rs.getObject("operational_date",LocalDate.class),rs.getLong("total")));
   }
 
   public List<Row> page(

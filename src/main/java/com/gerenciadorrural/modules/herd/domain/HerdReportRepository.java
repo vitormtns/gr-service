@@ -29,6 +29,20 @@ public interface HerdReportRepository {
 
   EventLedger eventLedger(TenantId tenantId, UUID farmId, LocalDate from, LocalDate to);
 
+  List<AgeSexFlow> ageSexFlows(TenantId tenantId, UUID farmId, LocalDate from, LocalDate to);
+
+  AgeSexAnimals ageSexAnimals(TenantId tenantId, UUID farmId, LocalDate referenceDate,
+      boolean historical, HerdAnimalSex sex, LocalDate birthAfter, LocalDate birthThrough,
+      boolean unknownBirthDate, int limit, long offset);
+
+  record AgeSexFlow(HerdAnimalSex sex, LocalDate birthDate, LocalDate occurredOn,
+      AnimalEventType eventType, long count) {}
+
+  record AgeSexAnimal(AnimalReference animal, HerdAnimalSex sex, LocalDate birthDate,
+      boolean availableInCurrentFarm) {}
+
+  record AgeSexAnimals(List<AgeSexAnimal> items, long totalElements) {}
+
   ReportPage<LifecycleSummary, LifecycleItem> lifecycle(
       TenantId tenantId,
       UUID farmId,

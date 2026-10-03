@@ -46,8 +46,8 @@ class ListCurrentFarmAnimalsTest {
             synchronousTransactions(context), repository
         ).execute(context, query);
 
-        assertThat(result).isSameAs(expected);
-        assertThat(result.items()).containsExactly(animal);
+        assertThat(result.items().getFirst().age().completedMonths()).isGreaterThan(0);
+        assertThat(result.items().getFirst().id()).isEqualTo(animal.id());
         assertThat(result.page()).isEqualTo(2);
         assertThat(result.size()).isEqualTo(7);
         assertThat(result.totalElements()).isEqualTo(15);

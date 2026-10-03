@@ -25,6 +25,64 @@ class HerdAgendaRepositoryIntegrationTest extends PostgresMigrationTestSupport {
     private static final LocalDate REFERENCE = LocalDate.of(2026, 1, 10);
 
     @Test
+    void projectsExplicitFutureSanitaryDatesWithinInclusiveHorizonAndIgnoresRetractedFacts() throws Exception {
+        Fixture f=fixtureWithThreeAnimals();
+        seedVaccination(f,f.animals().get(0),REFERENCE.plusDays(1));
+        seedVaccination(f,f.animals().get(2),REFERENCE.plusDays(16));
+        executeAsAdmin("insert into app.animal_health_treatments(id,tenant_id,farm_id,animal_id,operation_id,treatment_type,occurred_on,next_due_on) values(?,?,?,?,?,'DEWORMING',?,?)",
+            UUID.randomUUID(),f.tenant(),f.farm(),f.animals().get(1),UUID.randomUUID(),REFERENCE.minusDays(1),REFERENCE.plusDays(15));
+        try(Connection connection=adminConnection()) {
+            var r=repository(connection);
+            assertThat(page(r,f,HerdAgendaSource.DERIVED,HerdPlannerType.VACCINATION,null,REFERENCE,
+                REFERENCE.plusDays(15),20,0)).singleElement().satisfies(row->{
+                    assertThat(row.operationalDate()).isEqualTo(REFERENCE.plusDays(1));
+                    assertThat(row.pendingWorkType()).isNull();
+                    assertThat(row.summary()).isEqualTo("Vacinação prevista");
+                });
+            assertThat(page(r,f,HerdAgendaSource.DERIVED,HerdPlannerType.DEWORMING,null,REFERENCE,
+                REFERENCE.plusDays(14),20,0)).isEmpty();
+            assertThat(page(r,f,HerdAgendaSource.DERIVED,HerdPlannerType.DEWORMING,null,REFERENCE,
+                REFERENCE.plusDays(15),20,0)).hasSize(1);
+            assertThat(r.dailyCounts(new TenantId(f.tenant()),f.farm(),REFERENCE,7,14,
+                HerdAgendaSource.DERIVED,HerdPlannerType.VACCINATION,null,REFERENCE,REFERENCE.plusDays(15)))
+                .singleElement().satisfies(day->assertThat(day.count()).isOne());
+            assertThat(r.page(new TenantId(f.tenant()),f.farm(),REFERENCE.plusDays(1),7,14,
+                HerdAgendaSource.DERIVED,HerdPlannerType.VACCINATION,f.animals().get(0),REFERENCE,
+                REFERENCE.plusDays(15),20,0)).singleElement().satisfies(row->
+                    assertThat(row.pendingWorkType()).hasToString("VACCINATION_DUE"));
+        }
+        executeAsAdmin("insert into app.animal_health_treatment_retractions(id,tenant_id,farm_id,animal_id,treatment_id,operation_id) select ?,tenant_id,farm_id,animal_id,id,? from app.animal_health_treatments where tenant_id=? and farm_id=? and animal_id=?",
+            UUID.randomUUID(),UUID.randomUUID(),f.tenant(),f.farm(),f.animals().get(0));
+        try(Connection connection=adminConnection()) {
+            assertThat(page(repository(connection),f,HerdAgendaSource.DERIVED,HerdPlannerType.VACCINATION,
+                null,REFERENCE,REFERENCE.plusDays(15),20,0)).isEmpty();
+        }
+    }
+
+    @Test
+    void aggregatesAllCalendarItemsBeyondFirstPageAndPreservesFiltersAndRls() throws Exception {
+        Fixture f=fixtureWithThreeAnimals();
+        for(int i=0;i<105;i++)seedManual(f,REFERENCE,HerdPlannerType.GENERAL,"Tarefa "+i,f.animals().getFirst());
+        seedManual(f,REFERENCE.plusDays(1),HerdPlannerType.CALVING,"Conferir parto",f.animals().getFirst());
+        try(Connection connection=adminConnection()) {
+            var r=repository(connection);
+            var days=r.dailyCounts(new TenantId(f.tenant()),f.farm(),REFERENCE,90,14,
+                HerdAgendaSource.MANUAL,null,null,REFERENCE,REFERENCE.plusDays(1));
+            assertThat(days).hasSize(2);
+            assertThat(days.getFirst().count()).isEqualTo(105);
+            assertThat(r.dailyCounts(new TenantId(f.tenant()),f.farm(),REFERENCE,90,14,
+                HerdAgendaSource.MANUAL,HerdPlannerType.CALVING,null,REFERENCE,REFERENCE.plusDays(1)))
+                .singleElement().satisfies(day->assertThat(day.count()).isOne());
+        }
+        try(Connection connection=apiConnection()) {
+            setTenant(connection,UUID.randomUUID());
+            assertThat(repository(connection).dailyCounts(new TenantId(f.tenant()),f.farm(),REFERENCE,90,14,
+                null,null,null,REFERENCE,REFERENCE.plusDays(1))).isEmpty();
+            connection.rollback();
+        }
+    }
+
+    @Test
     void paginatesGloballyAcrossSixInterleavedManualAndDerivedItems() throws Exception {
         Fixture fixture = fixtureWithThreeAnimals();
         seedRecentWeight(fixture, fixture.animals().get(0), LocalDate.of(2026, 1, 9));

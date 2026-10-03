@@ -50,6 +50,63 @@ public class JdbcHerdReportRepository implements HerdReportRepository {
             rs.getLong("total")));
   }
 
+  private static final String HISTORICAL_MEMBERS = """
+      with last_flow as (
+        select distinct on (animal_id) animal_id,event_type
+          from app.animal_events
+         where tenant_id=:tenant and farm_id=:farm
+           and event_type in ('CREATED','BORN','TRANSFERRED_IN','SOLD','DECEASED','TRANSFERRED_OUT')
+           and coalesce(occurred_on,recorded_at::date)<=:reference
+         order by animal_id,coalesce(occurred_on,recorded_at::date) desc,recorded_at desc,id desc
+      )
+      """;
+
+  @Override
+  public AgeSexAnimals ageSexAnimals(TenantId tenant, UUID farm, LocalDate reference,
+      boolean historical, HerdAnimalSex sex, LocalDate birthAfter, LocalDate birthThrough,
+      boolean unknownBirthDate, int limit, long offset) {
+    MapSqlParameterSource params = base(tenant, farm).addValue("reference", reference)
+        .addValue("sex", sex == null ? null : sex.name()).addValue("birthAfter", birthAfter)
+        .addValue("birthThrough", birthThrough).addValue("limit", limit).addValue("offset", offset);
+    String population = historical
+        ? " join last_flow f on f.animal_id=a.id where a.tenant_id=:tenant and f.event_type in ('CREATED','BORN','TRANSFERRED_IN') "
+        : " where a.tenant_id=:tenant and a.farm_id=:farm and a.status='ACTIVE' ";
+    String where = population + " and (cast(:sex as text) is null or a.sex=:sex) "
+        + (unknownBirthDate ? " and (a.birth_date is null or a.birth_date>:reference) "
+            : " and a.birth_date<=:reference and (cast(:birthAfter as date) is null or a.birth_date>:birthAfter) and (cast(:birthThrough as date) is null or a.birth_date<=:birthThrough) ");
+    String prefix = historical ? HISTORICAL_MEMBERS : "";
+    long total = number(prefix + "select count(*) from app.animals a" + where, params);
+    String snapshot = historical ? " left join lateral (select e.payload->>'identification' identification,e.payload->>'name' name from app.animal_events e where e.tenant_id=:tenant and e.farm_id=:farm and e.animal_id=a.id and e.event_type='CREATED' order by e.recorded_at,e.id limit 1) historical_profile on true " : "";
+    String identity = historical ? "historical_profile.identification,historical_profile.name" : "a.identification,a.name";
+    List<AgeSexAnimal> rows = jdbc.query(prefix
+        + "select a.id,"+identity+",a.sex,a.birth_date,(a.farm_id=:farm) available_in_current_farm from app.animals a" + snapshot + where
+        + " order by lower(btrim("+(historical?"historical_profile.identification":"a.identification")+")) nulls last,a.id limit :limit offset :offset", params,
+        (rs, n) -> new AgeSexAnimal(animal(rs,"id","identification","name"),
+            HerdAnimalSex.valueOf(rs.getString("sex")),rs.getObject("birth_date",LocalDate.class),
+            rs.getBoolean("available_in_current_farm")));
+    return new AgeSexAnimals(rows,total);
+  }
+
+  @Override
+  public List<AgeSexFlow> ageSexFlows(TenantId tenant, UUID farm, LocalDate from, LocalDate to) {
+    return jdbc.query("""
+        select a.sex,a.birth_date,coalesce(e.occurred_on,e.recorded_at::date) effective_on,
+               e.event_type,count(*) total
+          from app.animal_events e join app.animals a on a.tenant_id=e.tenant_id and a.id=e.animal_id
+         where e.tenant_id=:tenant and e.farm_id=:farm
+           and e.event_type in ('CREATED','BORN','TRANSFERRED_IN','SOLD','DECEASED','TRANSFERRED_OUT')
+           and coalesce(e.occurred_on,e.recorded_at::date) between :from and :to
+           and (e.event_type<>'CREATED' or not exists (
+             select 1 from app.animal_events b where b.tenant_id=e.tenant_id and b.farm_id=e.farm_id
+               and b.animal_id=e.animal_id and b.event_type='BORN'))
+         group by a.sex,a.birth_date,effective_on,e.event_type
+         order by effective_on,e.event_type,a.sex,a.birth_date
+        """,base(tenant,farm).addValue("from",from).addValue("to",to),
+        (rs,n)->new AgeSexFlow(HerdAnimalSex.valueOf(rs.getString("sex")),
+            rs.getObject("birth_date",LocalDate.class),rs.getObject("effective_on",LocalDate.class),
+            AnimalEventType.valueOf(rs.getString("event_type")),rs.getLong("total")));
+  }
+
   @Override
   public List<AgeSexCount> historicalAgeSexCounts(TenantId tenant, UUID farm, LocalDate asOf) {
     return jdbc.query("""

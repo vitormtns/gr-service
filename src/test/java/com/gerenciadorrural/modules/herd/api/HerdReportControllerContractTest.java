@@ -93,6 +93,37 @@ class HerdReportControllerContractTest {
   }
 
   @Test
+  void exposesSignedAgeBandChangesAndHistoricalEventAges() throws Exception {
+    LocalDate from=LocalDate.of(2026,9,1),to=LocalDate.of(2026,9,13),birth=LocalDate.of(2026,6,10);
+    when(repository.historicalAgeSexCounts(context.tenantId(),context.farmId(),from.minusDays(1)))
+        .thenReturn(List.of(new AgeSexCount(HerdAnimalSex.FEMALE,birth,1)));
+    when(repository.historicalAgeSexCounts(context.tenantId(),context.farmId(),to))
+        .thenReturn(List.of(new AgeSexCount(HerdAnimalSex.FEMALE,birth,1)));
+    when(repository.ageSexFlows(context.tenantId(),context.farmId(),from,to)).thenReturn(List.of());
+    mvc.perform(get("/api/v1/herd/reports/age-sex-period?from=2026-09-01&to=2026-09-13"))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.openingOn").value("2026-08-31"))
+        .andExpect(jsonPath("$.cells[1].ageBandChange").value(-1))
+        .andExpect(jsonPath("$.cells[3].ageBandChange").value(1))
+        .andExpect(jsonPath("$.totals.ageBandChange").value(0));
+    mvc.perform(get("/api/v1/herd/reports/age-sex-period?from=2026-09-14&to=2026-09-13"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void derivesDrilldownBirthBoundsFromExplicitReferenceAndRejectsAmbiguousFilters() throws Exception {
+    when(repository.ageSexAnimals(any(),any(),any(),anyBoolean(),any(),any(),any(),anyBoolean(),anyInt(),anyLong()))
+        .thenReturn(new AgeSexAnimals(List.of(),0));
+    mvc.perform(get("/api/v1/herd/reports/historical-age-sex-animals?asOf=2026-02-28&ageBand=MONTHS_0_2&sex=FEMALE"))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.referenceDate").value("2026-02-28"));
+    verify(repository).ageSexAnimals(context.tenantId(),context.farmId(),LocalDate.of(2026,2,28),true,
+        HerdAnimalSex.FEMALE,LocalDate.of(2025,11,28),LocalDate.of(2026,2,28),false,20,0);
+    mvc.perform(get("/api/v1/herd/reports/current-age-sex-animals?unknownBirthDate=true&ageBand=MONTHS_0_2"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/herd/reports/historical-age-sex-animals?asOf=2026-09-14"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void reconstructsHistoricalBalanceFromEventsWithExplicitProfileSemantics() throws Exception {
     LocalDate asOf = LocalDate.of(2026, 9, 1);
     when(repository.historicalAgeSexCounts(context.tenantId(), context.farmId(), asOf))

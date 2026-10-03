@@ -46,4 +46,9 @@ public interface HerdAgendaRepository {
       PendingWorkType pendingWorkType,
       UUID pregnancyId,
       HerdPlannerStatus status) {}
+
+  List<DailyCount> dailyCounts(TenantId tenant,UUID farm,LocalDate reference,int weighingDays,
+      int upcomingDays,HerdAgendaSource source,HerdPlannerType type,UUID animal,
+      LocalDate from,LocalDate to);
+  record DailyCount(LocalDate operationalDate,long count) {}
 }

@@ -18,6 +18,8 @@ public interface MaternalRelationRepository {
 
     List<UUID> calfIds(TenantId tenantId, UUID motherId, int size, long offset);
 
+    List<HerdAnimalSummary> currentFarmCalves(TenantId tenantId, UUID farmId, UUID motherId, int size, long offset);
+
     boolean change(TenantId tenantId, UUID calfId, UUID beforeMotherId, UUID afterMotherId);
 
     boolean remove(TenantId tenantId, UUID calfId, UUID beforeMotherId);
