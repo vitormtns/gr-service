@@ -19,6 +19,17 @@ public class HerdAgendaController {
     this.agenda = agenda;
   }
 
+  @GetMapping("/daily-summary")
+  ResponseEntity<?> daily(@ResolvedTenantContext TenantContext context,
+      @RequestParam(required=false) HerdAgendaSource source,@RequestParam(required=false) HerdPlannerType type,
+      @RequestParam(required=false) UUID animalId,@RequestParam LocalDate from,@RequestParam LocalDate to,
+      @RequestParam(defaultValue="false") boolean includeOverdue,HttpServletRequest request){
+    if(!Set.of("source","type","animalId","from","to","includeOverdue").containsAll(request.getParameterMap().keySet())
+        ||request.getParameterMap().values().stream().anyMatch(v->v.length!=1))throw new HerdAnimalQueryException();
+    return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+        .body(agenda.dailySummary(context,source,type,animalId,from,to,includeOverdue));
+  }
+
   @GetMapping
   ResponseEntity<?> page(
       @ResolvedTenantContext TenantContext c,
