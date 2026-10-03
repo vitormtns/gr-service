@@ -2,6 +2,10 @@
 
 Auditoria iniciada em 02/10/2026 e encerrada após validação local em 03/10/2026. Este relatório e a matriz AFTER delimitam o legado como fonte de requisitos, com equivalência funcional, substituições fundamentadas e exceções explícitas.
 
+### Congelamento do legado
+
+Com a integração desta missão em `main`, `bovnex2` passa a ser exclusivamente histórico e somente leitura. Não é fonte de verdade do domínio, requisito normativo ou baseline arquitetural, e não deve ser consultado por padrão ao criar novas funcionalidades. O eBov atual é a referência funcional. A matriz final preserva as exceções de GEDAVE oficial (`REGULATORY_BLOCKED`) e offline/sincronização do futuro cliente (`CLIENT_ONLY_FUTURE_APP`). Os estados de branches e working trees descritos abaixo registram o encerramento da auditoria antes do merge final.
+
 ### Baseline discovered
 
 Backend: `main`, `a7490c7cfd83198f685416b2380910814904150f`; portal: `main`, `f08e5bc862d39fc9a5016f064a566e2bd7fd24fb`; BovNex: `main`, `717a84e30e079a8c5a8b48dcc819b677c2981269`. Fetch confirmou `main...origin/main = 0/0` nos dois repositórios alterados. Branches de trabalho: `feature/bovnex-superset-closure`, sem merge ou push. Backend baseline: 616 testes, incluindo oito de arquitetura, e verify aprovados. Web baseline: 543 testes em 70 arquivos, typechecks e build aprovados. `.maestri/` e `brag-plan.md`, não versionados, eram preexistentes e foram preservados.
