@@ -47,6 +47,76 @@ class HerdReportRepositoryIntegrationTest extends PostgresMigrationTestSupport {
   }
 
   @Test
+  void groupsFlowsByHistoricalEventDateAndDrillsDownSoldAnimalsOnlyBeforeExit() throws Exception {
+    Fixture f=fixture();
+    event(f,f.sold(),"CREATED",LocalDate.of(2026,1,1),null,"{}");
+    event(f,f.sold(),"SOLD",LocalDate.of(2026,2,1),UUID.randomUUID(),"{}");
+    event(f,f.deceased(),"CREATED",LocalDate.of(2026,1,10),null,"{}");
+    event(f,f.deceased(),"BORN",LocalDate.of(2026,1,10),UUID.randomUUID(),"{}");
+    event(f,f.deceased(),"DECEASED",LocalDate.of(2026,2,2),UUID.randomUUID(),"{}");
+    try(Connection connection=adminConnection()) {
+      var r=repository(connection);
+      assertThat(r.ageSexFlows(tenant(f),f.farm(),LocalDate.of(2026,1,10),LocalDate.of(2026,2,1)))
+          .extracting(AgeSexFlow::eventType).containsExactly(AnimalEventType.BORN,AnimalEventType.SOLD);
+      assertThat(r.ageSexAnimals(tenant(f),f.farm(),LocalDate.of(2026,1,31),true,null,null,
+          LocalDate.of(2026,1,31),false,20,0).totalElements()).isEqualTo(2);
+      assertThat(r.ageSexAnimals(tenant(f),f.farm(),LocalDate.of(2026,2,1),true,null,null,
+          LocalDate.of(2026,2,1),false,20,0).items())
+          .extracting(row->row.animal().id()).containsExactly(f.deceased());
+      assertThat(r.ageSexAnimals(tenant(f),f.otherFarm(),LocalDate.of(2026,1,31),true,null,null,
+          LocalDate.of(2026,1,31),false,20,0).items()).isEmpty();
+    }
+    Fixture outsider=fixture();
+    try(Connection connection=apiConnection()) {
+      setTenant(connection,outsider.tenant());
+      assertThat(repository(connection).ageSexFlows(tenant(f),f.farm(),FROM,TO)).isEmpty();
+      assertThat(repository(connection).ageSexAnimals(tenant(f),f.farm(),LocalDate.of(2026,1,31),true,
+          null,null,LocalDate.of(2026,1,31),false,20,0).totalElements()).isZero();
+      connection.rollback();
+    }
+  }
+
+  @Test
+  void postpartumUsesLatestActualCalvingDateEvenWhenOlderFactWasRecordedLater() throws Exception {
+    Fixture f=fixture();
+    event(f,f.activeFemale(),"CALVED",LocalDate.of(2026,8,1),UUID.randomUUID(),"{}");
+    event(f,f.activeFemale(),"CALVED",LocalDate.of(2026,7,1),UUID.randomUUID(),"{}");
+    try(Connection connection=adminConnection()) {
+      var r=new com.gerenciadorrural.modules.herd.infrastructure.JdbcHerdReproductionRepository(
+          new NamedParameterJdbcTemplate(new SingleConnectionDataSource(connection,true)));
+      assertThat(r.latestCalvingOn(tenant(f),f.farm(),f.activeFemale())).contains(LocalDate.of(2026,8,1));
+      assertThat(r.latestCalvingOn(tenant(f),f.otherFarm(),f.activeFemale())).isEmpty();
+      assertThat(r.latestCalvingOn(tenant(f),f.farm(),f.activeMale())).isEmpty();
+    }
+    try(Connection connection=apiConnection()) {
+      setTenant(connection,UUID.randomUUID());
+      var r=new com.gerenciadorrural.modules.herd.infrastructure.JdbcHerdReproductionRepository(
+          new NamedParameterJdbcTemplate(new SingleConnectionDataSource(connection,true)));
+      assertThat(r.latestCalvingOn(tenant(f),f.farm(),f.activeFemale())).isEmpty();
+      connection.rollback();
+    }
+  }
+
+  @Test
+  void historicalDrilldownDoesNotExposeNamesCorrectedAfterTransferToAnotherFarm() throws Exception {
+    Fixture f=fixture();
+    event(f,f.activeFemale(),"CREATED",LocalDate.of(2026,1,1),null,
+        "{\"identification\":\"Histórico 01\",\"name\":\"Nome anterior\"}");
+    event(f,f.activeFemale(),"TRANSFERRED_OUT",LocalDate.of(2026,2,1),UUID.randomUUID(),"{}");
+    executeAsAdmin("update app.animals set farm_id=?,paddock_id=null,identification='Novo identificador',name='Nome restrito' where tenant_id=? and id=?",
+        f.otherFarm(),f.tenant(),f.activeFemale());
+    try(Connection connection=adminConnection()) {
+      assertThat(repository(connection).ageSexAnimals(tenant(f),f.farm(),LocalDate.of(2026,1,31),true,
+          HerdAnimalSex.FEMALE,null,LocalDate.of(2026,1,31),false,20,0).items())
+          .singleElement().satisfies(row->{
+            assertThat(row.animal().identification()).isEqualTo("Histórico 01");
+            assertThat(row.animal().name()).isEqualTo("Nome anterior");
+            assertThat(row.availableInCurrentFarm()).isFalse();
+          });
+    }
+  }
+
+  @Test
   void healthReportFiltersStructuredProcedureAndOmitsRetractedFacts() throws Exception {
     Fixture fixture = fixture();
     UUID treatment = UUID.randomUUID();
