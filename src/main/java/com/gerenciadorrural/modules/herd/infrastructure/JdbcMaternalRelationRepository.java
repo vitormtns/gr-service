@@ -74,6 +74,32 @@ public class JdbcMaternalRelationRepository implements MaternalRelationRepositor
     }
 
     @Override
+    public List<com.gerenciadorrural.modules.herd.domain.HerdAnimalSummary> currentFarmCalves(
+            TenantId tenantId, UUID farmId, UUID motherId, int size, long offset) {
+        return jdbc.query("""
+                select a.id,a.identification,a.name,a.sex,a.birth_date,a.status,a.version,
+                       p.id paddock_id,p.name paddock_name,p.code paddock_code,
+                       p.status paddock_status,p.version paddock_version
+                  from app.animal_maternal_relations r
+                  join app.animals a on a.tenant_id=r.tenant_id and a.id=r.calf_animal_id
+                  left join app.paddocks p on p.tenant_id=a.tenant_id and p.farm_id=a.farm_id and p.id=a.paddock_id
+                 where r.tenant_id=:tenant and r.mother_animal_id=:mother and a.farm_id=:farm
+                 order by r.created_at desc,a.id desc limit :size offset :offset
+                """, params(tenantId).addValue("farm",farmId).addValue("mother",motherId)
+                .addValue("size",size).addValue("offset",offset), (r,i) -> {
+                    var paddockId=r.getObject("paddock_id",UUID.class);
+                    var paddock=paddockId==null?null:new com.gerenciadorrural.modules.herd.domain.PaddockSummary(
+                        paddockId,r.getString("paddock_name"),r.getString("paddock_code"),
+                        com.gerenciadorrural.modules.herd.domain.PaddockStatus.valueOf(r.getString("paddock_status")),r.getLong("paddock_version"));
+                    return new com.gerenciadorrural.modules.herd.domain.HerdAnimalSummary(
+                        r.getObject("id",UUID.class),r.getString("identification"),r.getString("name"),
+                        com.gerenciadorrural.modules.herd.domain.HerdAnimalSex.valueOf(r.getString("sex")),
+                        r.getObject("birth_date",java.time.LocalDate.class),
+                        com.gerenciadorrural.modules.herd.domain.HerdAnimalStatus.valueOf(r.getString("status")),r.getLong("version"),paddock);
+                });
+    }
+
+    @Override
     public boolean remove(TenantId tenantId, UUID calfId, UUID beforeMotherId) {
         return jdbc.update("""
                 delete from app.animal_maternal_relations
