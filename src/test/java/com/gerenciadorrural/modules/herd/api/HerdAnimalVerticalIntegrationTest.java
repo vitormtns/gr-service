@@ -240,7 +240,7 @@ class HerdAnimalVerticalIntegrationTest extends SpringPostgresTestSupport {
             .andExpect(jsonPath("$.totalPages").value(1))
             .andExpect(jsonPath("$.items", hasSize(2)))
 
-            .andExpect(jsonPath("$.items[0].*", hasSize(7)))
+            .andExpect(jsonPath("$.items[0].*", hasSize(8)))
             .andExpect(jsonPath("$.items[0].id").isNotEmpty())
             .andExpect(jsonPath("$.items[0].identification").value("A-001"))
             .andExpect(jsonPath("$.items[0].name").value(nullValue()))
@@ -249,7 +249,7 @@ class HerdAnimalVerticalIntegrationTest extends SpringPostgresTestSupport {
             .andExpect(jsonPath("$.items[0].status").value("ACTIVE"))
             .andExpect(jsonPath("$.items[0].version").value(0))
 
-            .andExpect(jsonPath("$.items[1].*", hasSize(7)))
+            .andExpect(jsonPath("$.items[1].*", hasSize(8)))
             .andExpect(jsonPath("$.items[1].id").isNotEmpty())
             .andExpect(jsonPath("$.items[1].identification").value("B-002"))
             .andExpect(jsonPath("$.items[1].name").value("Brisa"))
@@ -301,7 +301,7 @@ class HerdAnimalVerticalIntegrationTest extends SpringPostgresTestSupport {
             .andExpect(jsonPath("$.totalElements").value(2))
             .andExpect(jsonPath("$.totalPages").value(2))
             .andExpect(jsonPath("$.items", hasSize(1)))
-            .andExpect(jsonPath("$.items[0].*", hasSize(7)))
+            .andExpect(jsonPath("$.items[0].*", hasSize(8)))
             .andExpect(jsonPath("$.items[0].identification").value("A-001"))
             .andExpect(content().string(not(containsString("B-002"))))
             .andExpect(content().string(not(containsString("C-003"))))
@@ -328,7 +328,7 @@ class HerdAnimalVerticalIntegrationTest extends SpringPostgresTestSupport {
             .andExpect(jsonPath("$.totalElements").value(2))
             .andExpect(jsonPath("$.totalPages").value(2))
             .andExpect(jsonPath("$.items", hasSize(1)))
-            .andExpect(jsonPath("$.items[0].*", hasSize(7)))
+            .andExpect(jsonPath("$.items[0].*", hasSize(8)))
             .andExpect(jsonPath("$.items[0].identification").value("B-002"))
             .andExpect(content().string(not(containsString("A-001"))))
             .andExpect(content().string(not(containsString("C-003"))))
@@ -486,7 +486,7 @@ class HerdAnimalVerticalIntegrationTest extends SpringPostgresTestSupport {
         var request = post("/api/v1/herd/animals").contentType("application/json")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token()).header("X-Organization-Id", tenantAId).header("X-Farm-Id", farmA1Id);
         mvc.perform(request.content(body)).andExpect(status().isCreated()).andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
-                .andExpect(jsonPath("$.*", hasSize(7))).andExpect(jsonPath("$.id").value(id.toString())).andExpect(jsonPath("$.identification").value("E-005"))
+                .andExpect(jsonPath("$.*", hasSize(8))).andExpect(jsonPath("$.id").value(id.toString())).andExpect(jsonPath("$.identification").value("E-005"))
                 .andExpect(jsonPath("$.name").value("Brisa")).andExpect(jsonPath("$.status").value("ACTIVE")).andExpect(jsonPath("$.version").value(0));
         mvc.perform(request.content("{\"id\":\"" + id + "\",\"identification\":\"\\tE-005\\n\",\"name\":\" Brisa \",\"sex\":\"FEMALE\",\"birthDate\":\"2024-03-15\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.version").value(0));
