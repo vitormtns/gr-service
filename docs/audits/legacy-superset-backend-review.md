@@ -1,0 +1,31 @@
+# Revisão independente de idade, linhagem, grupos e seleção
+
+Revisor: agente backend_audit. Revisão retomada em 03/10/2026, baseada no código atual. Escopo independente: capacidades implementadas pelo agente principal (idade/linhagem/grupos) e seleção web implementada pelo agente legacy_audit. Relatórios, calendário e inteligência reprodutiva de autoria deste revisor não são apresentados como revisão independente própria.
+
+## Findings e correções
+
+| Finding | Evidência | Impacto | Correção / situação |
+|---|---|---|---|
+| R01 — Seleção de grupo combinava páginas de momentos diferentes | `GroupsPageComponent.selectGroupSnapshot` originalmente usava até cinco chamadas page/size=20 em forkJoin. Total igual e IDs únicos não excluem troca de membros mantendo a contagem. | A seleção podia combinar membros de consultas distintas e ser chamada de snapshot. | legacy_audit corrigiu para uma chamada page=0/size=100, preservando paginação visual de 20. Revisor releu o código corrigido e confirmou validações de total, limite e unicidade; teste dedicado informado pelo autor, execução final pelo agente principal. |
+| R02 — Linhagem perdeu idade por parente | Legado `animal_detail_panel.dart:806–808` e lista de descendentes apresentavam sexo e idade. Novo Node e UI inicialmente continham apenas identificação/sexo/geração. | Árvore existia, mas informação útil do legado desaparecia, contrariando comparação por microcomportamentos. | Finding reconhecido pelo principal. Correção deste revisor: repository Node recebe birthDate; aplicação usa Clock e `AgeIntelligence.derive`; Result expõe referenceDate e items.age. Teste de aplicação verifica aniversário mensal ainda não atingido e nascimento ausente; integração verifica nascimento real do parente. Web deve apresentar idade derivada. Essa correção exige validação posterior e revisão pelo principal. |
+| R03 — Nome atual após transferência podia vazar no drilldown histórico | Finding do agente principal em `JdbcHerdReportRepository.ageSexAnimals`; a posição histórica podia consultar perfil atualmente corrigido em outra fazenda. | Identificação/nome da nova custódia apareciam a usuário com acesso somente à custódia histórica. | Corrigido pelo autor backend_audit: somente snapshot CREATED da fazenda histórica ou identidade nula; `availableInCurrentFarm` permite desabilitar link não disponível. Teste real transfer+rename adicionado após último foco. Não é apresentado como finding independente deste revisor. |
+
+## Verificações independentes sem findings adicionais
+
+- Idade: `AgeIntelligence` deriva meses, faixa atual, próxima faixa/data e boundary a partir de nascimento e referência. Ausência/futuro retorna inteligência desconhecida; faixa final não inventa próxima transição. JDBC usa as fronteiras fornecidas por `AgePolicy`, filtra tenant/farm/ACTIVE e aplica ajuste de fim de mês equivalente ao domínio. Contagem é server-side, sem carregar todo rebanho no Angular.
+- Linhagem: links exigem ambos os parentes visíveis na mesma fazenda e tenant. A travessia interrompe vínculo fora do escopo, limita profundidade, protege caminho contra ciclo e sinaliza limites de população/geração. Não há divulgação transitiva de animal em fazenda não autorizada.
+- Grupos: criação com seleção e associação em lote usam TenantTransactionExecutor, autorização de escrita, lista explícita de até 100 IDs únicos, locks ordenados nos animais, versão do grupo, comando canônico e recibo append-only. Replay conserva resultado sem gravar novamente; versão divergente não sobrescreve. RLS/FORCE RLS e chaves compostas estão presentes na migration gerada pelo CLI. Nenhuma operação remota foi executada pelo revisor.
+- Seleção web: resultado filtrado inteiro é solicitado com size=100 e exige total igual ao tamanho retornado. Inativos excluídos são informados ao usuário. Grupo seleciona ativos explicitamente, não amplia silenciosamente para todo rebanho. Saúde e reprodução reconsultam IDs antes de preparar a operação; lote misto/inativo é bloqueado sem substituir por subconjunto silencioso. Comandos mantêm operationId para retry; troca de contexto cancela consultas e limpa revisão/seleção.
+- Navegação e UX: permissões controlam ações; formulários e revisões oferecem cancelamento/retorno, listas explicam o conjunto afetado e erros mantêm revisão para retry. Saúde embutida não dispara a leitura de histórico da página completa. Textos novos examinados estão em pt-BR com acentuação.
+
+## Evidência de validação disponível
+
+Execuções anteriores do autor backend_audit: 66 testes focados com ArchUnit aprovados e 37 testes focados de calendário/sanidade aprovados, ambas com zero falhas/erros/ignorados. Esses resultados não incluem o novo teste de transferência/renomeação nem a correção R02. A suíte/verify final do principal deve comprovar o estado final; o revisor não executou Maven concorrente àquela suíte.
+
+`git diff --check` passou após a correção R02. Nenhum commit foi criado pelo revisor. A revisão encontra correções concretas e não autoriza declaração de encerramento antes de validar seus testes e a surface web correspondente.
+
+## Ajustes da infraestrutura de testes após a primeira suíte completa
+
+A primeira execução completa em 03/10/2026 executou 641 testes e apontou 3 falhas e 144 erros. O log `superset-final-backend-verify.log` mostrou a causa compartilhada dos erros: a limpeza em `PostgresTestEnvironment` truncava grupos sem truncar `herd_group_operations`, nova tabela com FK. A lista de limpeza foi corrigida explicitamente, sem CASCADE; a outra lista compartilhada, `PostgresMigrationTestSupport`, já incluía a tabela. A busca no código confirmou somente essas duas listas de limpeza.
+
+As três falhas eram expectativas desatualizadas: dois inventários de schema/RLS em `IdentityTenancyMigrationTest` omitiram a nova tabela; o contrato antigo da lista de animais esperava sete campos em vez dos oito atuais, incluindo `age`. As expectativas foram atualizadas preservando a verificação de FORCE RLS, contrato público e ausência de dados de tenant. Não houve alteração de regra de negócio para acomodar testes. A próxima suíte completa deve validar o estado corrigido; não foi executado Maven concorrente pelo revisor.
