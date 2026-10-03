@@ -86,6 +86,7 @@ public final class PostgresTestEnvironment {
                         app.animal_milk_records,
                         app.herd_animal_imports,
                         app.herd_breeding_batches,
+                        app.herd_group_operations,
                         app.herd_group_members,
                         app.herd_groups,
                         app.herd_management_operations,
